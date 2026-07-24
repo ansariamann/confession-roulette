@@ -1,0 +1,71 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── pendingConfessions ──────────────────────────────────────────────────
+    // Auth'd users can create their own confessions (must start as "pending").
+    // Nobody reads, updates, or deletes from the client — only the server
+    // (via Admin SDK) mutates moderationStatus.
+    match /pendingConfessions/{docId} {
+      allow create: if request.auth != null
+                    && request.resource.data.authorUid == request.auth.uid
+                    && request.resource.data.moderationStatus == "pending";
+      allow read, update, delete: if false;
+    }
+
+    // ── moderationLog ───────────────────────────────────────────────────────
+    // NEVER accessible from any client. Only the server (Admin SDK)
+    // can write here. This is the audit trail for rejected confessions.
+    match /moderationLog/{docId} {
+      allow read, write: if false;
+    }
+
+    // ── presence ────────────────────────────────────────────────────────────
+    // Each auth'd user can write their own heartbeat. Only the server reads.
+    match /presence/{uid} {
+      allow write: if request.auth != null && request.auth.uid == uid;
+      allow read: if false;
+    }
+
+    // ── drops ───────────────────────────────────────────────────────────────
+    // Clients can read drops where their UID is in the recipient list.
+    // Only the server creates/updates drops.
+    match /drops/{docId} {
+      allow read: if request.auth != null
+                  && request.auth.uid in resource.data.recipientUids;
+      allow write: if false;
+
+      // ── reactions subcollection under drops ──────────────────────────────
+      // Clients who are recipients of the parent drop can read reaction counts
+      // and increment them. Never store which user reacted.
+      match /reactions/{emojiType} {
+        allow read: if request.auth != null
+                    && request.auth.uid in
+                       get(/databases/$(database)/documents/drops/$(docId))
+                         .data.recipientUids;
+        allow update: if request.auth != null
+                      && request.auth.uid in
+                         get(/databases/$(database)/documents/drops/$(docId))
+                           .data.recipientUids
+                      && request.resource.data.keys().hasOnly(['count'])
+                      && request.resource.data.count is int;
+        allow create, delete: if false;
+      }
+    }
+
+    // ── verdicts ──────────────────────────────────────────────────────────────
+    // Clients who were recipients of the original drop can read the verdict.
+    // Only the server (Admin SDK) writes verdicts. No confession text stored.
+    match /verdicts/{dropId} {
+      allow read: if request.auth != null
+                  && request.auth.uid in resource.data.recipientUids;
+      allow write: if false;
+    }
+
+    // ── _connectionTest ─────────────────────────────────────────────────────
+    // Scoped to the user's own UID for the Firebase connection smoke test.
+    match /_connectionTest/{docId} {
+      allow read, write: if request.auth != null && request.auth.uid == docId;
+    }
+  }
+}
