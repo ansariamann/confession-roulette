@@ -8,9 +8,9 @@ function NavBar() {
   const location = useLocation();
 
   const navItems = [
-    { path: "/", icon: "✍️", label: "Compose" },
-    { path: "/live", icon: "📡", label: "Live Drop" },
-    { path: "/verdict", icon: "⚖️", label: "Verdict" },
+    { path: "/", label: "Compose" },
+    { path: "/live", label: "Live" },
+    { path: "/verdict", label: "Verdict" },
   ];
 
   const isActive = (path) => {
@@ -27,8 +27,8 @@ function NavBar() {
           className={`nav-item ${isActive(path) ? "active" : ""}`}
           id={`nav-${label.toLowerCase().replace(/\s+/g, "-")}`}
         >
-          <span className="nav-icon">{icon}</span>
-          <span>{label}</span>
+          <span className="nav-label">{label}</span>
+          <span className="nav-dot" aria-hidden="true" />
         </NavLink>
       ))}
     </nav>
