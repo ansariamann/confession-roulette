@@ -13,13 +13,18 @@ function NavBar() {
     { path: "/verdict", icon: "⚖️", label: "Verdict" },
   ];
 
+  const isActive = (path) => {
+    if (path === "/") return location.pathname === "/";
+    return location.pathname.startsWith(path);
+  };
+
   return (
     <nav className="bottom-nav" id="main-nav">
       {navItems.map(({ path, icon, label }) => (
         <NavLink
           key={path}
           to={path}
-          className={`nav-item ${location.pathname === path ? "active" : ""}`}
+          className={`nav-item ${isActive(path) ? "active" : ""}`}
           id={`nav-${label.toLowerCase().replace(/\s+/g, "-")}`}
         >
           <span className="nav-icon">{icon}</span>
@@ -48,6 +53,7 @@ function AppShell() {
         <Route path="/" element={<ComposeScreen />} />
         <Route path="/live" element={<LiveDropScreen />} />
         <Route path="/verdict" element={<VerdictScreen />} />
+        <Route path="/verdict/:dropId" element={<VerdictScreen />} />
       </Routes>
       <NavBar />
     </>
