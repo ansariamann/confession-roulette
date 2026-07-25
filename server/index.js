@@ -24,10 +24,9 @@ const {
 // ─── Firebase Admin Init ─────────────────────────────────────────────────────
 const serviceAccountPath = path.join(__dirname, "serviceAccountKey.json");
 
-let app;
 try {
   const serviceAccount = require(serviceAccountPath);
-  app = initializeApp({ credential: cert(serviceAccount) });
+  initializeApp({ credential: cert(serviceAccount) });
   console.log("✅ Firebase Admin initialized");
 } catch (err) {
   console.error(
@@ -44,7 +43,13 @@ const db = getFirestore();
 // ─── AWS Comprehend Init ─────────────────────────────────────────────────────
 const comprehendClient = new ComprehendClient({
   region: process.env.AWS_REGION || "us-east-1",
-  // Credentials are picked up from env vars AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY
+  credentials:
+    process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY
+      ? {
+          accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+          secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+        }
+      : undefined,
 });
 
 // ─── Moderation Thresholds ───────────────────────────────────────────────────
@@ -274,6 +279,9 @@ async function moderateConfession(docSnapshot) {
     // ── Step 3: All checks passed ─────────────────────────────────────────
     console.log(`  ✅ ${docId}: passed all moderation checks`);
     await docRef.update({ moderationStatus: "passed" });
+
+    // Trigger drop scheduler immediately so drops don't wait for 60s tick
+    dropSchedulerTick();
   } catch (err) {
     // Fail closed — leave as "pending" so it can be retried
     console.error(`  ⚠️  Error moderating ${docId}:`, err.message);
@@ -307,11 +315,119 @@ function startListening() {
   );
 }
 
+// ─── User Reports Listener ──────────────────────────────────────────────────
+// Watches the `reports` collection for user-submitted reports during live drops.
+// Processes each report: logs to moderationLog, increments reportCount on the
+// author, and freezes the account if it crosses the threshold.
+
+const FREEZE_THRESHOLD = 5; // Configurable: freeze after this many reports
+
+/**
+ * Process a single user report.
+ * 1. Read the drop to get confession text + authorUid
+ * 2. Write moderationLog entry (hashed/truncated text)
+ * 3. Increment reportCount on the author's user doc
+ * 4. If reportCount >= threshold, set isFrozen = true
+ * 5. Delete the report document
+ */
+async function processReport(reportDoc) {
+  const reportId = reportDoc.id;
+  const reportData = reportDoc.data();
+  const { dropId, reporterUid } = reportData;
+
+  try {
+    // 1. Read the drop document to get confession text and author
+    let confessionText = reportData.confessionText || "[text unavailable]";
+    let authorUid = null;
+    let confessionId = null;
+
+    const dropDoc = await db.collection("drops").doc(dropId).get();
+    if (dropDoc.exists) {
+      const dropData = dropDoc.data();
+      confessionText = dropData.text || confessionText;
+      confessionId = dropData.confessionId;
+
+      // Look up the author from the pendingConfession if available
+      if (confessionId) {
+        const confessionDoc = await db.collection("pendingConfessions").doc(confessionId).get();
+        if (confessionDoc.exists) {
+          authorUid = confessionDoc.data().authorUid;
+        }
+      }
+    }
+
+    // 2. Write moderationLog entry (hashed/truncated, not full plaintext)
+    await db.collection("moderationLog").add({
+      confessionId: confessionId || dropId,
+      dropId,
+      reason: "user-reported",
+      description: `Reported by user during live drop`,
+      textHash: hashText(confessionText),
+      textPreview: truncateText(confessionText),
+      reporterUid,
+      priority: "NORMAL",
+      timestamp: FieldValue.serverTimestamp(),
+    });
+
+    // 3. Increment reportCount on author's user doc + check freeze
+    if (authorUid) {
+      const userRef = db.collection("users").doc(authorUid);
+      await userRef.set(
+        { reportCount: FieldValue.increment(1) },
+        { merge: true },
+      );
+
+      // Check if the author should be frozen
+      const updatedUser = await userRef.get();
+      const reportCount = updatedUser.data()?.reportCount || 0;
+
+      if (reportCount >= FREEZE_THRESHOLD) {
+        await userRef.update({ isFrozen: true });
+        console.log(
+          `  🧊 User ${authorUid} frozen (reportCount: ${reportCount} >= ${FREEZE_THRESHOLD})`
+        );
+      }
+
+      console.log(
+        `  🚩 Report processed: drop ${dropId}, author ${authorUid} ` +
+        `(reportCount: ${reportCount})`
+      );
+    } else {
+      console.log(`  🚩 Report processed: drop ${dropId} (author unknown)`);
+    }
+
+    // 4. Delete the processed report
+    await reportDoc.ref.delete();
+  } catch (err) {
+    console.error(`  ❌ Failed to process report ${reportId}:`, err.message);
+    // Still try to clean up the report doc
+    try { await reportDoc.ref.delete(); } catch { /* ignore cleanup error */ }
+  }
+}
+
+function startReportListener() {
+  console.log("🚩 Listening for user reports...\n");
+
+  db.collection("reports").onSnapshot(
+    (snapshot) => {
+      snapshot.docChanges().forEach((change) => {
+        if (change.type === "added") {
+          processReport(change.doc);
+        }
+      });
+    },
+    (error) => {
+      console.error("❌ Report listener error:", error.message);
+      setTimeout(startReportListener, 5000);
+    },
+  );
+}
+
 const DROP_INTERVAL_MS = 60_000;       // Run every 60 seconds
 const ACTIVE_WINDOW_MS = 2 * 60_000;   // "Active" = heartbeat within last 2 minutes
 const DROP_RECIPIENT_COUNT = 100;      // Fixed blast radius
 const MAX_CONFESSIONS_PER_TICK = 10;   // Process at most 10 confessions per cycle
-const DROP_DURATION_MS = 10_000;       // Confession is live for exactly 10 seconds
+const DROP_DURATION_MS = 60_000;       // Confession is live for 60 seconds total to gather reactions
 
 // Reaction emojis — must match client-side EMOJIS array
 const EMOJIS = ['😂', '💀', '😬', '❤️', '😳'];
@@ -344,15 +460,18 @@ async function getActiveUserUids() {
 }
 
 /**
- * Select up to `count` random recipients from the active pool,
- * excluding the confession author. Uses Fisher-Yates for uniform fairness.
+ * Select up to `count` random recipients from the active pool.
+ * Always EXCLUDES the confession author so the confessing author never receives
+ * their own confession drop — only other active users react to it.
  */
 function selectRecipients(activeUids, authorUid, count) {
-  // Remove author — you never see your own confession
+  if (!activeUids || activeUids.length === 0) return [];
+
+  // Exclude the author from the recipient pool
   const pool = activeUids.filter((uid) => uid !== authorUid);
 
   if (pool.length === 0) return [];
-  if (pool.length <= count) return pool; // everyone gets it
+  if (pool.length <= count) return pool;
 
   const shuffled = fisherYatesShuffle(pool);
   return shuffled.slice(0, count);
@@ -401,6 +520,7 @@ async function processExpiredDrop(dropDoc) {
     await db.collection("verdicts").doc(dropId).set({
       dropId,
       confessionId,
+      authorUid: dropData.authorUid || null,
       recipientUids: dropData.recipientUids || [],
       recipientCount: dropData.recipientCount || 0,
       reactions: reactionTotals,
@@ -459,12 +579,16 @@ function startExpirySweeper() {
   setInterval(expirySweepTick, EXPIRY_SWEEP_INTERVAL_MS);
 }
 
+let isScheduling = false;
+
 /**
  * One tick of the drop scheduler.
  * Queries passed confessions, selects random recipients, creates drops,
  * seeds reaction subdocs, and schedules 10-second expiry.
  */
 async function dropSchedulerTick() {
+  if (isScheduling) return;
+  isScheduling = true;
   try {
     // 1. Find passed confessions that haven't been scheduled yet
     const passedSnapshot = await db
@@ -487,6 +611,9 @@ async function dropSchedulerTick() {
 
     // 3. Create a drop for each passed confession
     for (const confessionDoc of passedSnapshot.docs) {
+      // Immediately mark as scheduled to prevent concurrent ticks from processing it
+      await confessionDoc.ref.update({ moderationStatus: "scheduled" });
+
       const confessionData = confessionDoc.data();
       const confessionId = confessionDoc.id;
       const authorUid = confessionData.authorUid;
@@ -502,6 +629,7 @@ async function dropSchedulerTick() {
       // Create the drop document
       const dropRef = await db.collection("drops").add({
         confessionId,
+        authorUid,
         text: confessionData.text,
         recipientUids: recipients,
         recipientCount: recipients.length,
@@ -517,9 +645,6 @@ async function dropSchedulerTick() {
       }
       await reactionBatch.commit();
 
-      // Mark the confession as scheduled (so it won't be picked up again)
-      await confessionDoc.ref.update({ moderationStatus: "scheduled" });
-
       console.log(
         `  📡 Drop created: ${dropRef.id} → ${recipients.length} recipients ` +
         `(confession: ${confessionId})`
@@ -529,6 +654,8 @@ async function dropSchedulerTick() {
     }
   } catch (err) {
     console.error("  ❌ Drop scheduler error:", err.message);
+  } finally {
+    isScheduling = false;
   }
 }
 
@@ -540,11 +667,109 @@ function startDropScheduler() {
   setInterval(dropSchedulerTick, DROP_INTERVAL_MS);
 }
 
+// ─── Hall of Fame Daily Rollup ───────────────────────────────────────────────
+// Runs periodically, checks if the current UTC day has un-rolled verdicts,
+// and sums all reaction totals into a single hallOfFameStats/{date} doc.
+// Only aggregate counts — never any confession text or individual verdict data.
+
+const ROLLUP_CHECK_INTERVAL_MS = 60_000; // Check every 60 seconds
+
+/**
+ * Get today's date key in YYYY-MM-DD (UTC).
+ */
+function getTodayKey() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/**
+ * Run the daily rollup: query all verdicts whose expiredAt is at least 5 minutes old,
+ * sum their reaction counts, update hallOfFameStats/{date}, and clean up old verdict docs.
+ * Leaving recent verdicts intact gives clients time to view the Verdict screen.
+ */
+async function rollupHallOfFame() {
+  const today = getTodayKey();
+  const FIVE_MINUTES_AGO = new Date(Date.now() - 5 * 60_000);
+
+  try {
+    // Only query verdicts that are at least 5 minutes old (clients have finished viewing)
+    const verdictsSnapshot = await db
+      .collection("verdicts")
+      .where("expiredAt", "<=", FIVE_MINUTES_AGO)
+      .get();
+
+    if (verdictsSnapshot.empty) return; // nothing old enough to roll up yet
+
+    // Check existing stats for today
+    const existingDoc = await db.collection("hallOfFameStats").doc(today).get();
+    const existing = existingDoc.exists ? existingDoc.data() : null;
+
+    // Sum reaction counts across all old verdicts
+    const emojiTotals = {};
+    let totalConfessions = 0;
+    let totalReactions = 0;
+
+    for (const emoji of EMOJIS) {
+      emojiTotals[emoji] = 0;
+    }
+
+    verdictsSnapshot.forEach((doc) => {
+      const data = doc.data();
+      const reactions = data.reactions || {};
+
+      totalConfessions++;
+      for (const [emoji, count] of Object.entries(reactions)) {
+        emojiTotals[emoji] = (emojiTotals[emoji] || 0) + (count || 0);
+        totalReactions += (count || 0);
+      }
+    });
+
+    // Merge with existing daily totals
+    if (existing) {
+      const prevTotals = existing.emojiTotals || {};
+      for (const emoji of EMOJIS) {
+        emojiTotals[emoji] = (emojiTotals[emoji] || 0) + (prevTotals[emoji] || 0);
+      }
+      totalConfessions += (existing.totalConfessions || 0);
+      totalReactions += (existing.totalReactions || 0);
+    }
+
+    // Write the rollup
+    await db.collection("hallOfFameStats").doc(today).set({
+      date: today,
+      emojiTotals,
+      totalConfessions,
+      totalReactions,
+      lastUpdated: FieldValue.serverTimestamp(),
+    });
+
+    // Clean up consumed verdicts that are at least 5 minutes old
+    const deleteBatch = db.batch();
+    verdictsSnapshot.docs.forEach((doc) => deleteBatch.delete(doc.ref));
+    await deleteBatch.commit();
+
+    console.log(
+      `  🏆 Hall of Fame rollup: ${today} — ` +
+      `${verdictsSnapshot.size} verdict(s) (>=5m old) consumed, ` +
+      `${totalReactions} total reactions`
+    );
+  } catch (err) {
+    console.error("  ❌ Hall of Fame rollup error:", err.message);
+  }
+}
+
+function startHallOfFameRollup() {
+  console.log(`🏆 Hall of Fame rollup started (checks every ${ROLLUP_CHECK_INTERVAL_MS / 1000}s)\n`);
+  setInterval(rollupHallOfFame, ROLLUP_CHECK_INTERVAL_MS);
+}
+
 // ─── Start Server ────────────────────────────────────────────────────────────
 console.log("╔══════════════════════════════════════════════╗");
 console.log("║   Verdict — Moderation + Drop Server         ║");
 console.log("╚══════════════════════════════════════════════╝");
 
 startListening();
+startReportListener();
 startDropScheduler();
 startExpirySweeper();
+startHallOfFameRollup();
+

@@ -14,10 +14,31 @@ service cloud.firestore {
     }
 
     // ── moderationLog ───────────────────────────────────────────────────────
-    // NEVER accessible from any client. Only the server (Admin SDK)
-    // can write here. This is the audit trail for rejected confessions.
+    // Inaccessible to normal clients. Admins (users with isAdmin == true in
+    // their users doc) can read for human review. Only the server writes.
     match /moderationLog/{docId} {
-      allow read, write: if false;
+      allow read: if request.auth != null
+                  && get(/databases/$(database)/documents/users/$(request.auth.uid))
+                       .data.isAdmin == true;
+      allow write: if false;
+    }
+
+    // ── users ────────────────────────────────────────────────────────────────
+    // Each auth'd user can read their own document (to check isFrozen).
+    // Only the server (Admin SDK) writes user docs.
+    match /users/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    // ── reports ──────────────────────────────────────────────────────────────
+    // Auth'd users can create reports during live drops. Write-only:
+    // no read access, no updates, no deletes from the client.
+    match /reports/{docId} {
+      allow create: if request.auth != null
+                    && request.resource.data.keys().hasAll(['dropId', 'reporterUid'])
+                    && request.resource.data.reporterUid == request.auth.uid;
+      allow read, update, delete: if false;
     }
 
     // ── presence ────────────────────────────────────────────────────────────
@@ -54,11 +75,19 @@ service cloud.firestore {
     }
 
     // ── verdicts ──────────────────────────────────────────────────────────────
-    // Clients who were recipients of the original drop can read the verdict.
-    // Only the server (Admin SDK) writes verdicts. No confession text stored.
+    // Reaction totals only (NO confession text). Readable by auth'd users.
+    // Server (Admin SDK) writes verdicts upon drop expiry.
     match /verdicts/{dropId} {
-      allow read: if request.auth != null
-                  && request.auth.uid in resource.data.recipientUids;
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
+    // ── hallOfFameStats ──────────────────────────────────────────────────────
+    // Pure aggregate emoji totals per day. Readable by any auth'd user.
+    // No individual confession content — just vibe stats.
+    // Only the server (Admin SDK) writes these.
+    match /hallOfFameStats/{date} {
+      allow read: if request.auth != null;
       allow write: if false;
     }
 

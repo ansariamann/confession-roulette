@@ -1,16 +1,47 @@
-import { useState } from "react";
-import { collection, addDoc } from "firebase/firestore";
+import { useState, useEffect } from "react";
+import { collection, addDoc, doc, setDoc, onSnapshot } from "firebase/firestore";
 import { db, serverTimestamp } from "../firebase";
 import { useAuth } from "../context/AuthProvider";
+import { useDrop } from "../context/DropContext";
 import ConnectionTest from "../components/ConnectionTest";
 
 const MAX_CHARS = 280;
 
 export default function ComposeScreen() {
   const { user } = useAuth();
+  const { setIsComposing } = useDrop();
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [queued, setQueued] = useState(false);
+  const [isFrozen, setIsFrozen] = useState(false);
+
+  // ── Listen to user doc for frozen status ─────────────────────────────────
+  useEffect(() => {
+    if (!user) return;
+
+    const unsub = onSnapshot(
+      doc(db, "users", user.uid),
+      (snapshot) => {
+        if (snapshot.exists()) {
+          setIsFrozen(snapshot.data().isFrozen === true);
+        }
+      },
+      () => {} // Ignore errors (doc may not exist yet)
+    );
+
+    return () => unsub();
+  }, [user]);
+
+  // Signal the global context whether the user is actively typing.
+  // "Queued" state does NOT count — we want users to be pulled into
+  // a live drop after they've submitted their confession.
+  useEffect(() => {
+    const composing = !queued && text.trim().length > 0;
+    setIsComposing(composing);
+
+    // Clear on unmount so navigating away doesn't leave it stuck
+    return () => setIsComposing(false);
+  }, [text, queued, setIsComposing]);
 
   const charsLeft = MAX_CHARS - text.length;
   const isEmpty = text.trim().length === 0;
@@ -21,6 +52,11 @@ export default function ComposeScreen() {
 
     setSending(true);
     try {
+      // Touch presence document so server immediately sees author as active
+      await setDoc(doc(db, "presence", user.uid), {
+        lastSeen: serverTimestamp(),
+      });
+
       await addDoc(collection(db, "pendingConfessions"), {
         text: text.trim(),
         submittedAt: serverTimestamp(),
@@ -40,6 +76,26 @@ export default function ComposeScreen() {
 
   function handleNewConfession() {
     setQueued(false);
+  }
+
+  // ── Frozen account state ─────────────────────────────────────────────────
+  if (isFrozen) {
+    return (
+      <div className="screen" id="compose-screen">
+        <div className="frozen-container">
+          <h1 className="screen-title">Account Under Review</h1>
+          <p className="screen-subtitle">
+            Your account has been temporarily frozen due to multiple reports
+            from other users. You cannot submit new confessions while your
+            account is under review.
+          </p>
+          <p className="frozen-hint">
+            If you believe this is an error, please wait for a moderator
+            to review your account.
+          </p>
+        </div>
+      </div>
+    );
   }
 
   // ── Queued confirmation state ──────────────────────────────────────────────

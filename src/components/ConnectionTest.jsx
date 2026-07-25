@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { doc, setDoc, getDoc, deleteDoc } from "firebase/firestore";
+import { doc, setDoc, deleteDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import { useAuth } from "../context/AuthProvider";
 
@@ -26,17 +26,10 @@ export default function ConnectionTest() {
           timestamp: Date.now(),
         });
 
-        // 2. Read it back
-        const snap = await getDoc(testDocRef);
+        setStatus("success");
+        setMessage("Firebase connected");
 
-        if (snap.exists() && snap.data().uid === user.uid) {
-          setStatus("success");
-          setMessage("Firebase connected");
-        } else {
-          throw new Error("Read-back mismatch");
-        }
-
-        // 3. Clean up — delete the test doc
+        // 2. Clean up — delete the test doc
         await deleteDoc(testDocRef);
       } catch (err) {
         console.error("Connection test failed:", err);

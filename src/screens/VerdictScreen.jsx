@@ -1,8 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { doc, getDoc, onSnapshot } from "firebase/firestore";
+import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase";
 import { useAuth } from "../context/AuthProvider";
+import { useDrop } from "../context/DropContext";
 
 const EMOJIS = ["😂", "💀", "😬", "❤️", "😳"];
 
@@ -23,7 +24,7 @@ const VERDICT_SUBTITLES = {
   "😳": "Every jaw in the room just hit the floor",
 };
 
-const AUTO_RETURN_MS = 8_000; // Return to /live after 8 seconds
+const AUTO_RETURN_MS = 16_000; // Return to / after 16 seconds
 
 /**
  * Determine the dominant emoji from the reactions map.
@@ -49,27 +50,35 @@ function getDominantEmoji(reactions) {
 export default function VerdictScreen() {
   const { dropId } = useParams();
   const { user } = useAuth();
+  const { authorVerdicts } = useDrop();
   const navigate = useNavigate();
 
-  const [verdict, setVerdict] = useState(null);
-  const [loading, setLoading] = useState(!!dropId);
+  const [urlVerdict, setUrlVerdict] = useState(null);
+  const [loading, setLoading] = useState(!!dropId && authorVerdicts.length === 0);
   const [error, setError] = useState(null);
 
-  // ── Fetch verdict document ─────────────────────────────────────────────────
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const touchStartXRef = useRef(null);
+
+  // ── Fetch single verdict document if dropId is in URL ─────────────────────────
   useEffect(() => {
     if (!dropId || !user) return;
 
-    // Try fetching the verdict doc. The expiry sweeper may not have written
-    // it yet (there can be a few seconds of delay), so we use onSnapshot
-    // to catch it as soon as it appears.
+    // Check if already in authorVerdicts
+    const existing = authorVerdicts.find((v) => v.id === dropId);
+    if (existing) {
+      setUrlVerdict(existing);
+      setLoading(false);
+      return;
+    }
+
     const unsubscribe = onSnapshot(
       doc(db, "verdicts", dropId),
       (snapshot) => {
         if (snapshot.exists()) {
-          setVerdict({ id: snapshot.id, ...snapshot.data() });
+          setUrlVerdict({ id: snapshot.id, ...snapshot.data() });
           setLoading(false);
         }
-        // If it doesn't exist yet, keep listening — the sweeper will write it soon
       },
       (err) => {
         console.error("Verdict fetch error:", err);
@@ -78,33 +87,72 @@ export default function VerdictScreen() {
       },
     );
 
-    // Timeout: if verdict never appears within 15s, stop waiting
     const timeout = setTimeout(() => {
-      if (loading) {
-        setLoading(false);
-        setError("Verdict timed out — the results may have already expired.");
-      }
+      setLoading((prev) => {
+        if (prev) {
+          setError("Verdict timed out — the results may have already expired.");
+          return false;
+        }
+        return prev;
+      });
     }, 15_000);
 
     return () => {
       unsubscribe();
       clearTimeout(timeout);
     };
-  }, [dropId, user]);
+  }, [dropId, user, authorVerdicts]);
 
-  // ── Auto-return to Live Drop after showing the verdict ─────────────────────
+  // Combine verdicts list (authorVerdicts prioritized, or urlVerdict)
+  const verdictsList = authorVerdicts.length > 0 ? authorVerdicts : (urlVerdict ? [urlVerdict] : []);
+
+  // Clamp current index
   useEffect(() => {
-    if (!verdict) return;
+    if (currentIndex >= verdictsList.length && verdictsList.length > 0) {
+      setCurrentIndex(verdictsList.length - 1);
+    }
+  }, [verdictsList.length, currentIndex]);
+
+  const currentVerdict = verdictsList[currentIndex] || null;
+
+  // ── Auto-return to Compose screen after viewing ───────────────────────────
+  useEffect(() => {
+    if (!currentVerdict) return;
 
     const timer = setTimeout(() => {
-      navigate("/live", { replace: true });
+      navigate("/", { replace: true });
     }, AUTO_RETURN_MS);
 
     return () => clearTimeout(timer);
-  }, [verdict, navigate]);
+  }, [currentVerdict, navigate]);
+
+  // ── Swipe handlers ────────────────────────────────────────────────────────
+  const handlePrev = useCallback(() => {
+    if (currentIndex > 0) setCurrentIndex((i) => i - 1);
+  }, [currentIndex]);
+
+  const handleNext = useCallback(() => {
+    if (currentIndex < verdictsList.length - 1) setCurrentIndex((i) => i + 1);
+  }, [currentIndex, verdictsList.length]);
+
+  function handleTouchStart(e) {
+    touchStartXRef.current = e.touches[0].clientX;
+  }
+
+  function handleTouchEnd(e) {
+    if (touchStartXRef.current === null) return;
+    const diffX = touchStartXRef.current - e.changedTouches[0].clientX;
+    touchStartXRef.current = null;
+
+    if (diffX > 40) {
+      handleNext();
+    } else if (diffX < -40) {
+      handlePrev();
+    }
+  }
 
   // ── Derived state ──────────────────────────────────────────────────────────
-  const reactions = verdict?.reactions || {};
+  const reactions = currentVerdict?.reactions || {};
   const dominantEmoji = getDominantEmoji(reactions);
   const caption = dominantEmoji
     ? VERDICT_CAPTIONS[dominantEmoji]
@@ -112,11 +160,11 @@ export default function VerdictScreen() {
   const subtitle = dominantEmoji
     ? VERDICT_SUBTITLES[dominantEmoji]
     : "The confession vanished into the void";
-  const totalReactions = verdict?.totalReactions || 0;
+  const totalReactions = currentVerdict?.totalReactions || 0;
   const maxCount = Math.max(1, ...Object.values(reactions));
 
-  // ── RENDER: No dropId (navigated to /verdict directly) ─────────────────────
-  if (!dropId) {
+  // ── RENDER: No verdicts ───────────────────────────────────────────────────
+  if (!dropId && verdictsList.length === 0) {
     return (
       <div className="screen" id="verdict-screen">
         <div className="verdict-empty">
@@ -132,7 +180,7 @@ export default function VerdictScreen() {
   }
 
   // ── RENDER: Loading ────────────────────────────────────────────────────────
-  if (loading) {
+  if (loading && verdictsList.length === 0) {
     return (
       <div className="screen" id="verdict-screen">
         <div className="verdict-loading">
@@ -144,7 +192,7 @@ export default function VerdictScreen() {
   }
 
   // ── RENDER: Error ──────────────────────────────────────────────────────────
-  if (error) {
+  if (error && verdictsList.length === 0) {
     return (
       <div className="screen" id="verdict-screen">
         <div className="verdict-empty">
@@ -158,8 +206,51 @@ export default function VerdictScreen() {
 
   // ── RENDER: Verdict result ─────────────────────────────────────────────────
   return (
-    <div className="screen" id="verdict-screen">
+    <div
+      className="screen"
+      id="verdict-screen"
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+    >
       <div className="verdict-result">
+        {/* Swipe deck header if multiple verdicts exist */}
+        {verdictsList.length > 1 && (
+          <div className="swipe-header">
+            <button
+              className="swipe-nav-btn"
+              onClick={handlePrev}
+              disabled={currentIndex === 0}
+              aria-label="Previous verdict"
+            >
+              ‹
+            </button>
+            <div className="swipe-dots">
+              {verdictsList.map((v, idx) => (
+                <span
+                  key={v.id}
+                  className={`swipe-dot ${idx === currentIndex ? "active" : ""}`}
+                  onClick={() => setCurrentIndex(idx)}
+                />
+              ))}
+            </div>
+            <button
+              className="swipe-nav-btn"
+              onClick={handleNext}
+              disabled={currentIndex === verdictsList.length - 1}
+              aria-label="Next verdict"
+            >
+              ›
+            </button>
+          </div>
+        )}
+
+        {/* Card counter badge */}
+        {verdictsList.length > 1 && (
+          <div className="card-badge">
+            Verdict {currentIndex + 1} of {verdictsList.length} ⟷
+          </div>
+        )}
+
         {/* Dominant emoji hero */}
         <div className="verdict-hero">
           <span className="verdict-dominant-emoji">
@@ -205,7 +296,7 @@ export default function VerdictScreen() {
 
         {/* Auto-return indicator */}
         <p className="verdict-return-hint">
-          Returning to live feed shortly…
+          Returning to compose shortly…
         </p>
       </div>
     </div>
