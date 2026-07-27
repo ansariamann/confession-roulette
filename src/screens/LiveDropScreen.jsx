@@ -13,6 +13,13 @@ import { useAuth } from "../context/AuthProvider";
 import { useDrop } from "../context/DropContext";
 
 const EMOJIS = ["😂", "💀", "😬", "❤️", "😳"];
+const EMOJI_LABELS = {
+  "😂": "Dying",
+  "💀": "Cooked",
+  "😬": "Yikes",
+  "❤️": "Respect",
+  "😳": "No way",
+};
 const USER_VIEW_DURATION_MS = 20_000;  // 20s per user reading & voting window
 
 export default function LiveDropScreen() {
@@ -43,6 +50,10 @@ export default function LiveDropScreen() {
   // Touch drag tracking for swipe gestures
   const touchStartXRef = useRef(null);
   const countdownRef = useRef(null);
+
+  // Emoji burst particles for the addictive tap feedback
+  const [bursts, setBursts] = useState([]);
+  const burstIdRef = useRef(0);
 
   // Filter to active drops that have NOT expired for this user
   const visibleDrops = activeDrops.filter((d) => !expiredMap[d.id]);
@@ -121,6 +132,23 @@ export default function LiveDropScreen() {
       const dropId = currentDrop.id;
       setVotedMap((prev) => ({ ...prev, [dropId]: true }));
 
+      // Fire a burst of floating emoji particles
+      const seeds = Array.from({ length: 7 }, () => {
+        burstIdRef.current += 1;
+        return {
+          key: burstIdRef.current,
+          emoji,
+          x: (Math.random() - 0.5) * 140,
+          delay: Math.random() * 180,
+          scale: 0.7 + Math.random() * 0.8,
+        };
+      });
+      setBursts((prev) => [...prev, ...seeds]);
+      setTimeout(() => {
+        const keys = new Set(seeds.map((s) => s.key));
+        setBursts((prev) => prev.filter((b) => !keys.has(b.key)));
+      }, 1400);
+
       try {
         const reactionRef = doc(db, "drops", dropId, "reactions", emoji);
         await updateDoc(reactionRef, { count: increment(1) });
@@ -191,6 +219,11 @@ export default function LiveDropScreen() {
 
   const currentReactions = currentDrop ? reactionsMap[currentDrop.id] || {} : {};
   const maxCount = Math.max(1, ...Object.values(currentReactions));
+  const totalVotes = Object.values(currentReactions).reduce((a, b) => a + b, 0);
+  const topEmoji = EMOJIS.reduce(
+    (best, e) => ((currentReactions[e] || 0) > (currentReactions[best] || 0) ? e : best),
+    EMOJIS[0],
+  );
 
   // ── RENDER: Waiting state (no visible drops) ───────────────────────────────
   if (!currentDrop || visibleDrops.length === 0) {
@@ -216,119 +249,136 @@ export default function LiveDropScreen() {
   // ── RENDER: Live state with swiping card deck ──────────────────────────────
   return (
     <div
-      className="screen"
+      className="screen live-stage"
       id="livedrop-screen"
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
-      <div className="livedrop-live">
-        {/* Swipe deck header / pagination indicators */}
-        {visibleDrops.length > 1 && (
-          <div className="swipe-header">
-            <button
-              className="swipe-nav-btn"
-              onClick={handlePrev}
-              disabled={currentIndex === 0}
-              aria-label="Previous confession"
-            >
-              ‹
-            </button>
-            <div className="swipe-dots">
-              {visibleDrops.map((d, idx) => (
-                <span
-                  key={d.id}
-                  className={`swipe-dot ${idx === currentIndex ? "active" : ""}`}
-                  onClick={() => setCurrentIndex(idx)}
-                />
-              ))}
-            </div>
-            <button
-              className="swipe-nav-btn"
-              onClick={handleNext}
-              disabled={currentIndex === visibleDrops.length - 1}
-              aria-label="Next confession"
-            >
-              ›
-            </button>
-          </div>
-        )}
-
-        {/* Countdown ring */}
-        <div className="countdown-container">
-          <svg className="countdown-ring" viewBox="0 0 120 120">
-            <circle
-              className="countdown-track"
-              cx="60"
-              cy="60"
-              r={RING_RADIUS}
+      {/* Story progress segments */}
+      <div className="story-bars">
+        {visibleDrops.map((d, idx) => (
+          <button
+            key={d.id}
+            className="story-bar"
+            onClick={() => setCurrentIndex(idx)}
+            aria-label={`Confession ${idx + 1}`}
+          >
+            <span
+              className="story-bar-fill"
+              style={{
+                width:
+                  idx < currentIndex
+                    ? "100%"
+                    : idx === currentIndex
+                      ? `${(1 - progress) * 100}%`
+                      : "0%",
+              }}
             />
-            <circle
-              className="countdown-progress"
-              cx="60"
-              cy="60"
-              r={RING_RADIUS}
-              strokeDasharray={RING_CIRCUMFERENCE}
-              strokeDashoffset={ringOffset}
-            />
-          </svg>
-          <span className="countdown-text">{userSeconds}</span>
-        </div>
+          </button>
+        ))}
+      </div>
 
-        {/* Confession card */}
-        <div className="livedrop-confession glass-card swipeable-card">
-          {visibleDrops.length > 1 && (
-            <div className="card-badge">
-              {currentIndex + 1} of {visibleDrops.length} ⟷
-            </div>
-          )}
-          <p className="confession-text">{currentDrop.text}</p>
+      <div className="live-meta">
+        <span className="live-meta-left">
+          <span className="live-pulse" />
+          Anonymous · {currentIndex + 1}/{visibleDrops.length}
+        </span>
+        <span className={`live-timer ${userSeconds <= 5 ? "urgent" : ""}`}>
+          {String(userSeconds).padStart(2, "0")}s
+        </span>
+      </div>
+
+      {/* Immersive confession stage */}
+      <div className="confession-stage swipeable-card" key={currentDrop.id}>
+        <span className="stage-quote" aria-hidden="true">“</span>
+        <p className="stage-text">{currentDrop.text}</p>
+
+        <div className="stage-foot">
+          <span className="stage-count">
+            {totalVotes > 0 ? `${totalVotes} reacted` : "Be the first to react"}
+          </span>
           <button
             className={`report-btn ${isReported ? "reported" : ""}`}
             onClick={handleReport}
             disabled={isReported}
             id="report-btn"
           >
-            {isReported ? "Reported ✓" : "⚑ Report"}
+            {isReported ? "Reported" : "Report"}
           </button>
         </div>
 
-        {/* Reaction buttons */}
-        <div className="reaction-row">
-          {EMOJIS.map((emoji) => (
-            <button
-              key={emoji}
-              className={`reaction-btn ${!canVote ? "disabled" : ""}`}
-              onClick={() => handleReaction(emoji)}
-              disabled={!canVote}
-              id={`reaction-${emoji}`}
+        <div className="burst-layer" aria-hidden="true">
+          {bursts.map((b) => (
+            <span
+              key={b.key}
+              className="burst-emoji"
+              style={{
+                "--bx": `${b.x}px`,
+                animationDelay: `${b.delay}ms`,
+                fontSize: `${22 * b.scale}px`,
+              }}
             >
-              <span className="reaction-emoji">{emoji}</span>
-              <span className="reaction-count">
-                {currentReactions[emoji] || 0}
-              </span>
-            </button>
+              {b.emoji}
+            </span>
           ))}
         </div>
+      </div>
 
-        {/* Live bar chart */}
-        <div className="livedrop-barchart glass-card">
-          {EMOJIS.map((emoji) => {
-            const count = currentReactions[emoji] || 0;
-            const width = maxCount > 0 ? (count / maxCount) * 100 : 0;
-            return (
-              <div className="bar-row" key={emoji}>
-                <span className="bar-emoji">{emoji}</span>
-                <div className="bar-track">
-                  <div
-                    className="bar-fill"
-                    style={{ width: `${width}%` }}
-                  />
-                </div>
-                <span className="bar-count">{count}</span>
+      {/* Reaction dock */}
+      <div className={`reaction-dock ${isVoted ? "locked" : ""}`}>
+        {EMOJIS.map((emoji) => (
+          <button
+            key={emoji}
+            className={`react-tile ${!canVote ? "disabled" : ""} ${
+              isVoted && emoji === topEmoji ? "top" : ""
+            }`}
+            onClick={() => handleReaction(emoji)}
+            disabled={!canVote}
+            id={`reaction-${emoji}`}
+          >
+            <span className="react-emoji">{emoji}</span>
+            <span className="react-label">{EMOJI_LABELS[emoji]}</span>
+            <span className="react-count">{currentReactions[emoji] || 0}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* Live pulse bars */}
+      <div className="live-results">
+        {EMOJIS.map((emoji) => {
+          const count = currentReactions[emoji] || 0;
+          const width = maxCount > 0 ? (count / maxCount) * 100 : 0;
+          const pct = totalVotes ? Math.round((count / totalVotes) * 100) : 0;
+          return (
+            <div className={`pulse-row ${emoji === topEmoji && count > 0 ? "lead" : ""}`} key={emoji}>
+              <span className="pulse-emoji">{emoji}</span>
+              <div className="pulse-track">
+                <div className="pulse-fill" style={{ width: `${width}%` }} />
               </div>
-            );
-          })}
+              <span className="pulse-pct">{pct}%</span>
+            </div>
+          );
+        })}
+      </div>
+
+      {visibleDrops.length > 1 && (
+        <div className="stage-nav">
+          <button onClick={handlePrev} disabled={currentIndex === 0} aria-label="Previous confession">
+            ← Prev
+          </button>
+          <span>swipe</span>
+          <button
+            onClick={handleNext}
+            disabled={currentIndex === visibleDrops.length - 1}
+            aria-label="Next confession"
+          >
+            Next →
+          </button>
         </div>
+      )}
+    </div>
+  );
+}
       </div>
     </div>
   );
