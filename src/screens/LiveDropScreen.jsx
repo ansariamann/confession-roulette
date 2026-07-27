@@ -213,10 +213,6 @@ export default function LiveDropScreen() {
   const userSeconds = Math.max(0, Math.ceil(userRemainingMs / 1000));
   const progress = Math.max(0, Math.min(1, userRemainingMs / USER_VIEW_DURATION_MS));
 
-  const RING_RADIUS = 54;
-  const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
-  const ringOffset = RING_CIRCUMFERENCE * (1 - progress);
-
   const currentReactions = currentDrop ? reactionsMap[currentDrop.id] || {} : {};
   const maxCount = Math.max(1, ...Object.values(currentReactions));
   const totalVotes = Object.values(currentReactions).reduce((a, b) => a + b, 0);
