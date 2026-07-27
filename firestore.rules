@@ -72,6 +72,41 @@ service cloud.firestore {
                       && request.resource.data.count is int;
         allow create, delete: if false;
       }
+
+      // ── voters subcollection: one-reaction-per-user enforcement ─────────
+      // Each recipient can create exactly ONE voter doc keyed by their UID.
+      // No updates or deletes — once you vote, it's permanent for that drop.
+      // The client writes { emoji, votedAt } then increments the reaction count.
+      match /voters/{voterId} {
+        allow read: if request.auth != null
+                    && request.auth.uid == voterId;
+        allow create: if request.auth != null
+                      && request.auth.uid == voterId
+                      && request.auth.uid in
+                         get(/databases/$(database)/documents/drops/$(docId))
+                           .data.recipientUids
+                      && request.resource.data.keys().hasAll(['emoji', 'votedAt'])
+                      && request.resource.data.emoji is string;
+        allow update, delete: if false;
+      }
+
+      // ── comments subcollection: anonymous ephemeral comments ────────────
+      // Recipients can read and create comments. No user identity stored
+      // in the comment doc — comments are fully anonymous and ephemeral.
+      match /comments/{commentId} {
+        allow read: if request.auth != null
+                    && request.auth.uid in
+                       get(/databases/$(database)/documents/drops/$(docId))
+                         .data.recipientUids;
+        allow create: if request.auth != null
+                      && request.auth.uid in
+                         get(/databases/$(database)/documents/drops/$(docId))
+                           .data.recipientUids
+                      && request.resource.data.keys().hasAll(['text', 'createdAt'])
+                      && request.resource.data.text is string
+                      && request.resource.data.text.size() <= 80;
+        allow update, delete: if false;
+      }
     }
 
     // ── verdicts ──────────────────────────────────────────────────────────────

@@ -21,6 +21,10 @@ const {
   DetectToxicContentCommand,
 } = require("@aws-sdk/client-comprehend");
 
+// HTTP and Socket.IO
+const http = require("http");
+const { Server } = require("socket.io");
+
 // ─── Firebase Admin Init ─────────────────────────────────────────────────────
 const serviceAccountPath = path.join(__dirname, "serviceAccountKey.json");
 
@@ -531,6 +535,17 @@ async function processExpiredDrop(dropDoc) {
     // 3. Hard-delete: reactions subcollection
     await deleteSubcollection(dropRef, "reactions");
 
+    // 3b. Hard-delete: voters subcollection (reaction dedup records)
+    await deleteSubcollection(dropRef, "voters");
+
+    // 3c. Hard-delete: comments subcollection (ephemeral anonymous comments)
+    await deleteSubcollection(dropRef, "comments");
+    
+    // 3d. Clear in-memory comment cache for this drop
+    if (global.commentsCache && global.commentsCache[dropId]) {
+      delete global.commentsCache[dropId];
+    }
+
     // 4. Hard-delete: the drop document itself
     await dropRef.delete();
 
@@ -772,4 +787,52 @@ startReportListener();
 startDropScheduler();
 startExpirySweeper();
 startHallOfFameRollup();
+
+// ─── Socket.IO Server for Comments ──────────────────────────────────────────
+const httpServer = http.createServer();
+const io = new Server(httpServer, {
+  cors: {
+    origin: "*", // allow all origins for dev
+  },
+});
+
+// Cache comments in memory so late joiners can see them
+global.commentsCache = {}; // { [dropId]: [{ id, text, createdAt }] }
+
+io.on("connection", (socket) => {
+  // Client joins a specific drop's room
+  socket.on("join_drop", (dropId) => {
+    socket.join(dropId);
+    
+    // Send existing comments to the newly joined client
+    const existingComments = global.commentsCache[dropId] || [];
+    socket.emit("initial_comments", existingComments);
+  });
+
+  // Client sends a new comment
+  socket.on("send_comment", (data) => {
+    const { dropId, text } = data;
+    if (!dropId || !text || text.trim().length === 0) return;
+
+    const trimmed = text.trim().slice(0, 80);
+    const commentObj = {
+      id: Math.random().toString(36).substring(2, 9),
+      text: trimmed,
+      createdAt: { toMillis: () => Date.now() }, // Mock Firestore Timestamp shape for client compat
+    };
+
+    if (!global.commentsCache[dropId]) {
+      global.commentsCache[dropId] = [];
+    }
+    global.commentsCache[dropId].push(commentObj);
+
+    // Broadcast to everyone in the room (including sender to trigger optimistic update if needed, but we rely on the broadcast for everyone)
+    io.to(dropId).emit("new_comment", commentObj);
+  });
+});
+
+const SOCKET_PORT = process.env.SOCKET_PORT || 3001;
+httpServer.listen(SOCKET_PORT, () => {
+  console.log(`🔌 Socket.IO server running on port ${SOCKET_PORT}`);
+});
 

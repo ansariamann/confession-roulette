@@ -42,6 +42,27 @@ export default function HallOfFameScreen() {
   const { user } = useAuth();
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [showSettings, setShowSettings] = useState(false);
+
+  // ── Settings (persisted to localStorage) ──────────────────────────────────
+  const [settings, setSettings] = useState(() => {
+    try {
+      const saved = localStorage.getItem("verdict-settings");
+      return saved
+        ? JSON.parse(saved)
+        : { soundEffects: true, vibration: true, autoScrollComments: true };
+    } catch {
+      return { soundEffects: true, vibration: true, autoScrollComments: true };
+    }
+  });
+
+  function toggleSetting(key) {
+    setSettings((prev) => {
+      const updated = { ...prev, [key]: !prev[key] };
+      localStorage.setItem("verdict-settings", JSON.stringify(updated));
+      return updated;
+    });
+  }
 
   // ── Listen to the most recent hallOfFameStats doc ──────────────────────────
   useEffect(() => {
@@ -90,6 +111,32 @@ export default function HallOfFameScreen() {
     }
   }
 
+  // ── Settings panel render helper ───────────────────────────────────────────
+  const settingsPanel = showSettings ? (
+    <div className="settings-panel glass-card">
+      {[
+        { key: "soundEffects", label: "Sound Effects", desc: "Tap and reaction audio feedback" },
+        { key: "vibration", label: "Vibration", desc: "Haptic feedback on reactions" },
+        { key: "autoScrollComments", label: "Auto-Scroll Comments", desc: "Scroll to latest comment automatically" },
+      ].map(({ key, label, desc }) => (
+        <div className="setting-row" key={key}>
+          <div className="setting-info">
+            <span className="setting-label">{label}</span>
+            <span className="setting-desc">{desc}</span>
+          </div>
+          <button
+            className={`setting-switch ${settings[key] ? "on" : "off"}`}
+            onClick={() => toggleSetting(key)}
+            aria-label={`Toggle ${label}`}
+            id={`setting-${key}`}
+          >
+            <span className="switch-knob" />
+          </button>
+        </div>
+      ))}
+    </div>
+  ) : null;
+
   // ── RENDER: Loading ────────────────────────────────────────────────────────
   if (loading) {
     return (
@@ -107,8 +154,19 @@ export default function HallOfFameScreen() {
     return (
       <div className="screen" id="halloffame-screen">
         <div className="hof-empty">
-          <h1 className="screen-title">Hall of Fame</h1>
-          <p className="screen-subtitle">
+          <div className="hof-header-row">
+            <h1 className="screen-title">Hall of Fame</h1>
+            <button
+              className="settings-icon-btn"
+              onClick={() => setShowSettings(!showSettings)}
+              aria-label="Settings"
+              id="settings-icon-toggle"
+            >
+              <span className="settings-icon">⚙</span>
+            </button>
+          </div>
+          {settingsPanel}
+          <p className="screen-subtitle" style={{ marginTop: showSettings ? 16 : 0 }}>
             No stats recorded yet. Confessions need to drop before the
             crowd's verdict can be tallied.
           </p>
@@ -124,7 +182,18 @@ export default function HallOfFameScreen() {
         {/* Date label */}
         <span className="eyebrow">{formatDate(stats.date)}</span>
 
-        <h1 className="screen-title">Hall of Fame</h1>
+        <div className="hof-header-row">
+          <h1 className="screen-title">Hall of Fame</h1>
+          <button
+            className="settings-icon-btn"
+            onClick={() => setShowSettings(!showSettings)}
+            aria-label="Settings"
+            id="settings-icon-toggle"
+          >
+            <span className="settings-icon">⚙</span>
+          </button>
+        </div>
+        {settingsPanel}
 
         {/* Hero stat — dominant vibe of the day */}
         {dominantEmoji && (

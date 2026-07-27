@@ -1331,6 +1331,216 @@ a { color: inherit; text-decoration: none; }
   border: 1px dashed var(--ink);
 }
 
+/* ── Comments Section (Live Drop) ────────────────────────────── */
+.comment-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+  width: 100%;
+}
+
+.comment-stream {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 0 4px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--hairline-strong) transparent;
+}
+
+.comment-stream::-webkit-scrollbar {
+  width: 4px;
+}
+.comment-stream::-webkit-scrollbar-track {
+  background: transparent;
+}
+.comment-stream::-webkit-scrollbar-thumb {
+  background-color: var(--hairline-strong);
+  border-radius: 2px;
+}
+
+.comment-bubble {
+  background: var(--paper);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--ink);
+  align-self: flex-start;
+  max-width: 90%;
+  word-wrap: break-word;
+  animation: slideUpFade 0.3s var(--ease) forwards;
+}
+
+@keyframes slideUpFade {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.comment-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.comment-input {
+  flex: 1;
+  background: var(--paper);
+  border: 1px solid var(--hairline);
+  border-radius: 20px;
+  padding: 10px 16px;
+  font-family: var(--font-body);
+  font-size: 14px;
+  color: var(--ink);
+  outline: none;
+  transition: border-color 0.2s var(--ease);
+}
+
+.comment-input:focus {
+  border-color: var(--ink-soft);
+}
+
+.comment-input:disabled {
+  background: transparent;
+  color: var(--muted);
+}
+
+.comment-send {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--ink);
+  color: var(--paper);
+  border: none;
+  cursor: pointer;
+  font-size: 18px;
+  transition: transform 0.2s var(--ease), opacity 0.2s;
+}
+
+.comment-send:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+.comment-send:not(:disabled):active {
+  transform: scale(0.9);
+}
+
+/* ── Settings Panel (Hall of Fame) ─────────────────────────────── */
+.hof-settings-section {
+  width: 100%;
+  margin-top: 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+}
+
+.settings-toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: 1px solid var(--hairline-strong);
+  padding: 8px 16px;
+  border-radius: 20px;
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+
+.settings-toggle-btn:hover {
+  background: var(--hairline);
+  color: var(--ink);
+}
+
+.settings-chevron {
+  font-size: 14px;
+}
+
+.settings-panel {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  border-radius: 12px;
+  animation: slideDownFade 0.2s var(--ease) forwards;
+}
+
+@keyframes slideDownFade {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.setting-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.setting-label {
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.setting-desc {
+  font-family: var(--font-body);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.setting-switch {
+  width: 44px;
+  height: 24px;
+  border-radius: 12px;
+  border: none;
+  background: var(--hairline-strong);
+  position: relative;
+  cursor: pointer;
+  transition: background 0.3s var(--ease);
+}
+
+.setting-switch.on {
+  background: var(--ink);
+}
+
+.switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--paper);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  transition: transform 0.3s var(--ease);
+}
+
+.setting-switch.on .switch-knob {
+  transform: translateX(20px);
+}
+
 /* ── Utility: hide the emoji-heavy legacy nodes gracefully ──── */
 .verdict-empty .screen-icon,
 .queued-icon { display: none; }
@@ -1342,3 +1552,36 @@ a { color: inherit; text-decoration: none; }
     transition-duration: 0.001ms !important;
   }
 }
+/*  Hall of Fame Header Settings  */
+.hof-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.hof-header-row .screen-title {
+  margin-bottom: 0;
+}
+
+.settings-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 50%;
+  color: var(--ink);
+  transition: background-color 0.2s var(--ease);
+}
+
+.settings-icon-btn:hover {
+  background-color: var(--hairline);
+}
+
+.settings-icon-btn .settings-icon {
+  font-size: 24px;
+}
+
