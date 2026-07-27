@@ -379,7 +379,3 @@ export default function LiveDropScreen() {
     </div>
   );
 }
-      </div>
-    </div>
-  );
-}
