@@ -207,16 +207,6 @@ a { color: inherit; text-decoration: none; }
 }
 
 /* Editorial wordmark shown at top of every screen */
-.screen::before {
-  content: "VERDICT";
-  display: block;
-  font-family: var(--font-display);
-  font-weight: 800;
-  font-size: 10px;
-  letter-spacing: 0.32em;
-  color: var(--ink);
-  margin-bottom: 6px;
-}
 .screen::after {
   content: "";
   position: absolute;
