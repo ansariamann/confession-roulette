@@ -16,6 +16,7 @@ import { db } from "../firebase";
 import { useAuth } from "../context/AuthProvider";
 import { useDrop } from "../context/DropContext";
 import { io } from "socket.io-client";
+import useFeedback from "../hooks/useFeedback";
 
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || "http://localhost:3001";
 const socket = io(SOCKET_URL, { autoConnect: false });
@@ -34,6 +35,7 @@ const MAX_COMMENT_LENGTH = 80;
 export default function LiveDropScreen() {
   const { user } = useAuth();
   const { activeDrops } = useDrop();
+  const { playReaction, playDrop, vibrate } = useFeedback();
 
   // Map of drops that have completed their 20s viewing window for this recipient: { [dropId]: boolean }
   const [expiredMap, setExpiredMap] = useState({});
@@ -63,6 +65,11 @@ export default function LiveDropScreen() {
   // Emoji burst particles for the addictive tap feedback
   const [bursts, setBursts] = useState([]);
   const burstIdRef = useRef(0);
+
+  // Rising emoji from remote reactions
+  const [risers, setRisers] = useState([]);
+  const riserIdRef = useRef(0);
+  const prevReactionsRef = useRef({});
 
   // Settings
   const [settings] = useState(() => {
@@ -147,6 +154,31 @@ export default function LiveDropScreen() {
         snapshot.forEach((d) => {
           counts[d.id] = d.data().count || 0;
         });
+
+        // Detect remote reaction changes → fire rising emoji
+        const prev = prevReactionsRef.current[currentDrop.id] || {};
+        for (const emoji of EMOJIS) {
+          const diff = (counts[emoji] || 0) - (prev[emoji] || 0);
+          if (diff > 0) {
+            const newRisers = Array.from({ length: Math.min(diff, 3) }, () => {
+              riserIdRef.current += 1;
+              return {
+                key: riserIdRef.current,
+                emoji,
+                x: 10 + Math.random() * 80, // % from left
+                delay: Math.random() * 200,
+                scale: 0.6 + Math.random() * 0.6,
+              };
+            });
+            setRisers((r) => [...r, ...newRisers]);
+            setTimeout(() => {
+              const keys = new Set(newRisers.map((r) => r.key));
+              setRisers((r) => r.filter((ri) => !keys.has(ri.key)));
+            }, 2000);
+          }
+        }
+        prevReactionsRef.current[currentDrop.id] = counts;
+
         setReactionsMap((prev) => ({
           ...prev,
           [currentDrop.id]: counts,
@@ -223,6 +255,10 @@ export default function LiveDropScreen() {
 
       const dropId = currentDrop.id;
       setVotedMap((prev) => ({ ...prev, [dropId]: true }));
+
+      // Sound & haptic feedback
+      playReaction();
+      vibrate(40);
 
       // Fire a burst of floating emoji particles
       const seeds = Array.from({ length: 7 }, () => {
@@ -439,6 +475,23 @@ export default function LiveDropScreen() {
             </span>
           ))}
         </div>
+      </div>
+
+      {/* Rising emoji from remote reactions */}
+      <div className="rise-layer" aria-hidden="true">
+        {risers.map((r) => (
+          <span
+            key={r.key}
+            className="rise-emoji"
+            style={{
+              left: `${r.x}%`,
+              animationDelay: `${r.delay}ms`,
+              fontSize: `${20 * r.scale}px`,
+            }}
+          >
+            {r.emoji}
+          </span>
+        ))}
       </div>
 
       {/* Reaction dock */}

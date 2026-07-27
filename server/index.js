@@ -450,9 +450,9 @@ function fisherYatesShuffle(arr) {
 }
 
 /**
- * Get all currently active user UIDs (heartbeat within ACTIVE_WINDOW_MS).
+ * Get all currently active user UIDs grouped by communityId (heartbeat within ACTIVE_WINDOW_MS).
  */
-async function getActiveUserUids() {
+async function getActiveUsersByCommunity() {
   const cutoff = new Date(Date.now() - ACTIVE_WINDOW_MS);
 
   const snapshot = await db
@@ -460,7 +460,19 @@ async function getActiveUserUids() {
     .where("lastSeen", ">", cutoff)
     .get();
 
-  return snapshot.docs.map((doc) => doc.id);
+  const communityMap = {};
+  snapshot.docs.forEach((doc) => {
+    const data = doc.data();
+    const uid = doc.id;
+    const communityId = data.communityId || "global";
+    
+    if (!communityMap[communityId]) {
+      communityMap[communityId] = [];
+    }
+    communityMap[communityId].push(uid);
+  });
+
+  return communityMap;
 }
 
 /**
@@ -614,15 +626,16 @@ async function dropSchedulerTick() {
 
     if (passedSnapshot.empty) return; // nothing to schedule
 
-    // 2. Get active user pool
-    const activeUids = await getActiveUserUids();
+    // 2. Get active user pool grouped by community
+    const communityMap = await getActiveUsersByCommunity();
+    const totalActive = Object.values(communityMap).reduce((acc, arr) => acc + arr.length, 0);
 
-    if (activeUids.length === 0) {
+    if (totalActive === 0) {
       console.log("  ⏳ No active users — skipping drop cycle");
       return;
     }
 
-    console.log(`\n🎯 Drop tick: ${passedSnapshot.size} confession(s), ${activeUids.length} active user(s)`);
+    console.log(`\n🎯 Drop tick: ${passedSnapshot.size} confession(s), ${totalActive} active user(s)`);
 
     // 3. Create a drop for each passed confession
     for (const confessionDoc of passedSnapshot.docs) {
@@ -632,12 +645,15 @@ async function dropSchedulerTick() {
       const confessionData = confessionDoc.data();
       const confessionId = confessionDoc.id;
       const authorUid = confessionData.authorUid;
+      const targetCommunity = confessionData.communityId || "global";
+      
+      const activeUids = communityMap[targetCommunity] || [];
 
       // Select random recipients
       const recipients = selectRecipients(activeUids, authorUid, DROP_RECIPIENT_COUNT);
 
       if (recipients.length === 0) {
-        console.log(`  ⏳ ${confessionId}: no eligible recipients (author is the only active user)`);
+        console.log(`  ⏳ ${confessionId}: no eligible recipients in community '${targetCommunity}'`);
         continue;
       }
 

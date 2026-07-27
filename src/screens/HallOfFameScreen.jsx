@@ -1,10 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   collection,
   query,
   orderBy,
   limit,
   onSnapshot,
+  where,
 } from "firebase/firestore";
 import { db } from "../firebase";
 import { useAuth } from "../context/AuthProvider";
@@ -18,6 +19,55 @@ const EMOJI_LABELS = {
   "❤️": "In The Feels",
   "😳": "Shook",
 };
+
+const VIBE_COLORS = {
+  "😂": "#f59e0b",
+  "💀": "#8b5cf6",
+  "😬": "#ef4444",
+  "❤️": "#ec4899",
+  "😳": "#3b82f6",
+};
+
+/**
+ * Auto-generate a flavor headline from the day's stats.
+ */
+function generateHeadline(dominant, totalConfessions, totalReactions) {
+  if (!dominant) return "Waiting for the first drop…";
+
+  const label = EMOJI_LABELS[dominant] || "Unknown";
+
+  const intros = {
+    "😂": [
+      `${totalConfessions} confessions dropped. The crowd chose laughter.`,
+      `A comedy kind of day. ${totalReactions} reactions can't be wrong.`,
+      `The jury says: funny. ${totalConfessions} confessions judged.`,
+    ],
+    "💀": [
+      `${totalConfessions} confessions. The crowd is unhinged today.`,
+      `Absolutely feral energy. ${totalReactions} reactions and counting.`,
+      `No survivors. ${totalConfessions} drops went full chaos.`,
+    ],
+    "😬": [
+      `${totalConfessions} confessions hit different. Peak cringe achieved.`,
+      `The crowd winced ${totalReactions} times today.`,
+      `Uncomfortable truths only. ${totalConfessions} drops, ${totalReactions} cringes.`,
+    ],
+    "❤️": [
+      `${totalConfessions} confessions. Today, the crowd felt something.`,
+      `The feels won. ${totalReactions} reactions from the heart.`,
+      `An emotional day. ${totalConfessions} drops reached the soul.`,
+    ],
+    "😳": [
+      `${totalConfessions} confessions left the crowd shook.`,
+      `Jaw-dropping energy. ${totalReactions} stunned reactions.`,
+      `The crowd couldn't even. ${totalConfessions} confessions did THAT.`,
+    ],
+  };
+
+  const options = intros[dominant] || [`${totalConfessions} confessions. Dominant vibe: ${label}.`];
+  // Deterministic pick based on totalConfessions so it doesn't flicker
+  return options[totalConfessions % options.length];
+}
 
 /**
  * Format a date string (YYYY-MM-DD) into a human label.
@@ -38,33 +88,39 @@ function formatDate(dateStr) {
   });
 }
 
+function formatDateShort(dateStr) {
+  const today = new Date().toISOString().slice(0, 10);
+  if (dateStr === today) return "Today";
+  const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+  if (dateStr === yesterday) return "Yest.";
+  const date = new Date(dateStr + "T00:00:00Z");
+  return date.toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" });
+}
+
+/**
+ * Find the dominant emoji from emojiTotals.
+ */
+function getDominant(emojiTotals) {
+  let dominant = null;
+  let maxCount = 0;
+  for (const emoji of EMOJIS) {
+    const count = emojiTotals[emoji] || 0;
+    if (count > maxCount) {
+      maxCount = count;
+      dominant = emoji;
+    }
+  }
+  return dominant;
+}
+
 export default function HallOfFameScreen() {
   const { user } = useAuth();
-  const [stats, setStats] = useState(null);
+  const [todayStats, setTodayStats] = useState(null);
+  const [weekStats, setWeekStats] = useState([]);
+  const [activeCount, setActiveCount] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [showSettings, setShowSettings] = useState(false);
 
-  // ── Settings (persisted to localStorage) ──────────────────────────────────
-  const [settings, setSettings] = useState(() => {
-    try {
-      const saved = localStorage.getItem("verdict-settings");
-      return saved
-        ? JSON.parse(saved)
-        : { soundEffects: true, vibration: true, autoScrollComments: true };
-    } catch {
-      return { soundEffects: true, vibration: true, autoScrollComments: true };
-    }
-  });
-
-  function toggleSetting(key) {
-    setSettings((prev) => {
-      const updated = { ...prev, [key]: !prev[key] };
-      localStorage.setItem("verdict-settings", JSON.stringify(updated));
-      return updated;
-    });
-  }
-
-  // ── Listen to the most recent hallOfFameStats doc ──────────────────────────
+  // ── Listen to latest day stats (real-time) ──────────────────────────────
   useEffect(() => {
     if (!user) return;
 
@@ -79,14 +135,14 @@ export default function HallOfFameScreen() {
       (snapshot) => {
         if (!snapshot.empty) {
           const doc = snapshot.docs[0];
-          setStats({ id: doc.id, ...doc.data() });
+          setTodayStats({ id: doc.id, ...doc.data() });
         } else {
-          setStats(null);
+          setTodayStats(null);
         }
         setLoading(false);
       },
       (err) => {
-        console.error("Hall of Fame fetch error:", err);
+        console.error("Pulse fetch error:", err);
         setLoading(false);
       },
     );
@@ -94,170 +150,215 @@ export default function HallOfFameScreen() {
     return () => unsub();
   }, [user]);
 
-  // ── Derived ────────────────────────────────────────────────────────────────
-  const emojiTotals = stats?.emojiTotals || {};
-  const totalReactions = stats?.totalReactions || 0;
-  const totalConfessions = stats?.totalConfessions || 0;
+  // ── Fetch 7-day history ─────────────────────────────────────────────────
+  useEffect(() => {
+    if (!user) return;
+
+    const q = query(
+      collection(db, "hallOfFameStats"),
+      orderBy("date", "desc"),
+      limit(7),
+    );
+
+    const unsub = onSnapshot(q, (snapshot) => {
+      const days = [];
+      snapshot.forEach((doc) => {
+        days.push({ id: doc.id, ...doc.data() });
+      });
+      setWeekStats(days.reverse()); // oldest first
+    });
+
+    return () => unsub();
+  }, [user]);
+
+  // ── Count active users (presence docs updated in last 2 min) ────────────
+  useEffect(() => {
+    if (!user) return;
+
+    const twoMinutesAgo = new Date(Date.now() - 2 * 60_000);
+    const q = query(
+      collection(db, "presence"),
+      where("lastSeen", ">=", twoMinutesAgo),
+    );
+
+    const unsub = onSnapshot(q, (snapshot) => {
+      setActiveCount(snapshot.size);
+    });
+
+    return () => unsub();
+  }, [user]);
+
+  // ── Derived ─────────────────────────────────────────────────────────────
+  const emojiTotals = todayStats?.emojiTotals || {};
+  const totalReactions = todayStats?.totalReactions || 0;
+  const totalConfessions = todayStats?.totalConfessions || 0;
   const maxCount = Math.max(1, ...Object.values(emojiTotals));
+  const dominantEmoji = getDominant(emojiTotals);
+  const vibeColor = dominantEmoji ? VIBE_COLORS[dominantEmoji] : "var(--ink-soft)";
 
-  // Find the dominant emoji of the day
-  let dominantEmoji = null;
-  let dominantCount = 0;
-  for (const emoji of EMOJIS) {
-    const count = emojiTotals[emoji] || 0;
-    if (count > dominantCount) {
-      dominantCount = count;
-      dominantEmoji = emoji;
-    }
-  }
+  const headline = useMemo(
+    () => generateHeadline(dominantEmoji, totalConfessions, totalReactions),
+    [dominantEmoji, totalConfessions, totalReactions],
+  );
 
-  // ── Settings panel render helper ───────────────────────────────────────────
-  const settingsPanel = showSettings ? (
-    <div className="settings-panel glass-card">
-      {[
-        { key: "soundEffects", label: "Sound Effects", desc: "Tap and reaction audio feedback" },
-        { key: "vibration", label: "Vibration", desc: "Haptic feedback on reactions" },
-        { key: "autoScrollComments", label: "Auto-Scroll Comments", desc: "Scroll to latest comment automatically" },
-      ].map(({ key, label, desc }) => (
-        <div className="setting-row" key={key}>
-          <div className="setting-info">
-            <span className="setting-label">{label}</span>
-            <span className="setting-desc">{desc}</span>
-          </div>
-          <button
-            className={`setting-switch ${settings[key] ? "on" : "off"}`}
-            onClick={() => toggleSetting(key)}
-            aria-label={`Toggle ${label}`}
-            id={`setting-${key}`}
-          >
-            <span className="switch-knob" />
-          </button>
-        </div>
-      ))}
-    </div>
-  ) : null;
+  // Week sparkline data
+  const weekMax = useMemo(() => {
+    return Math.max(1, ...weekStats.map((d) => d.totalReactions || 0));
+  }, [weekStats]);
 
-  // ── RENDER: Loading ────────────────────────────────────────────────────────
+  // ── RENDER: Loading ─────────────────────────────────────────────────────
   if (loading) {
     return (
       <div className="screen" id="halloffame-screen">
-        <div className="hof-loading">
+        <div className="pulse-loading">
           <div className="loading-spinner" />
-          <p className="screen-subtitle">Loading the archives…</p>
+          <p className="screen-subtitle">Reading the pulse…</p>
         </div>
       </div>
     );
   }
 
-  // ── RENDER: Empty state ────────────────────────────────────────────────────
-  if (!stats) {
+  // ── RENDER: Empty state ─────────────────────────────────────────────────
+  if (!todayStats) {
     return (
       <div className="screen" id="halloffame-screen">
-        <div className="hof-empty">
-          <div className="hof-header-row">
-            <h1 className="screen-title">Hall of Fame</h1>
-            <button
-              className="settings-icon-btn"
-              onClick={() => setShowSettings(!showSettings)}
-              aria-label="Settings"
-              id="settings-icon-toggle"
-            >
-              <span className="settings-icon">⚙</span>
-            </button>
-          </div>
-          {settingsPanel}
-          <p className="screen-subtitle" style={{ marginTop: showSettings ? 16 : 0 }}>
-            No stats recorded yet. Confessions need to drop before the
-            crowd's verdict can be tallied.
+        <div className="pulse-empty">
+          <div className="pulse-empty-icon">📡</div>
+          <h1 className="pulse-title">The Pulse</h1>
+          <p className="pulse-subtitle">
+            No signal yet. Confessions need to drop before
+            the community's pulse can be read.
           </p>
+          <div className="pulse-active-badge">
+            <span className="pulse-active-dot" />
+            <span>{activeCount} online now</span>
+          </div>
         </div>
       </div>
     );
   }
 
-  // ── RENDER: Stats display ──────────────────────────────────────────────────
+  // ── RENDER: The Pulse ───────────────────────────────────────────────────
   return (
     <div className="screen" id="halloffame-screen">
-      <div className="hof-content">
-        {/* Date label */}
-        <span className="eyebrow">{formatDate(stats.date)}</span>
+      <div className="pulse-content">
 
-        <div className="hof-header-row">
-          <h1 className="screen-title">Hall of Fame</h1>
-          <button
-            className="settings-icon-btn"
-            onClick={() => setShowSettings(!showSettings)}
-            aria-label="Settings"
-            id="settings-icon-toggle"
-          >
-            <span className="settings-icon">⚙</span>
-          </button>
-        </div>
-        {settingsPanel}
-
-        {/* Hero stat — dominant vibe of the day */}
-        {dominantEmoji && (
-          <div className="hof-hero">
-            <span className="hof-hero-emoji">{dominantEmoji}</span>
-            <div className="hof-hero-text">
-              <span className="hof-hero-label">Dominant Vibe</span>
-              <span className="hof-hero-name">
-                {EMOJI_LABELS[dominantEmoji]}
-              </span>
+        {/* Header */}
+        <div className="pulse-header">
+          <div className="pulse-header-top">
+            <h1 className="pulse-title">The Pulse</h1>
+            <div className="pulse-active-badge">
+              <span className="pulse-active-dot" />
+              <span>{activeCount}</span>
             </div>
           </div>
-        )}
+          <span className="pulse-date">{formatDate(todayStats.date)}</span>
+        </div>
 
-        {/* Aggregate numbers */}
-        <div className="hof-stats-row">
-          <div className="hof-stat">
-            <span className="hof-stat-number">{totalConfessions}</span>
-            <span className="hof-stat-label">
-              {totalConfessions === 1 ? "Confession" : "Confessions"}
+        {/* ── Hero Vibe Card ── */}
+        <div className="pulse-hero" style={{ "--vibe-color": vibeColor }}>
+          <div className="pulse-hero-glow" />
+          <span className="pulse-hero-emoji">{dominantEmoji}</span>
+          <div className="pulse-hero-info">
+            <span className="pulse-hero-eyebrow">COMMUNITY VIBE</span>
+            <span className="pulse-hero-label">{EMOJI_LABELS[dominantEmoji]}</span>
+          </div>
+        </div>
+
+        {/* ── Headline ── */}
+        <p className="pulse-headline">{headline}</p>
+
+        {/* ── Stats Grid ── */}
+        <div className="pulse-stats-grid">
+          <div className="pulse-stat-card">
+            <span className="pulse-stat-number">{totalConfessions}</span>
+            <span className="pulse-stat-label">
+              {totalConfessions === 1 ? "Drop" : "Drops"}
             </span>
           </div>
-          <div className="hof-stat-divider" />
-          <div className="hof-stat">
-            <span className="hof-stat-number">{totalReactions}</span>
-            <span className="hof-stat-label">
+          <div className="pulse-stat-card">
+            <span className="pulse-stat-number">{totalReactions}</span>
+            <span className="pulse-stat-label">
               {totalReactions === 1 ? "Reaction" : "Reactions"}
             </span>
           </div>
+          <div className="pulse-stat-card">
+            <span className="pulse-stat-number">
+              {totalConfessions > 0
+                ? Math.round(totalReactions / totalConfessions)
+                : 0}
+            </span>
+            <span className="pulse-stat-label">Avg / Drop</span>
+          </div>
         </div>
 
-        {/* Emoji breakdown chart */}
-        <div className="hof-chart">
-          <span className="eyebrow">Reaction Breakdown</span>
-          <div className="hof-bars">
+        {/* ── Reaction Breakdown ── */}
+        <div className="pulse-breakdown">
+          <span className="pulse-section-label">Reaction Breakdown</span>
+          <div className="pulse-bars">
             {EMOJIS.map((emoji) => {
               const count = emojiTotals[emoji] || 0;
               const pct = maxCount > 0 ? (count / maxCount) * 100 : 0;
               const isDominant = emoji === dominantEmoji;
               return (
                 <div
-                  className={`hof-bar-row ${isDominant ? "hof-bar-dominant" : ""}`}
+                  className={`pulse-bar-row ${isDominant ? "dominant" : ""}`}
                   key={emoji}
                 >
-                  <span className="hof-bar-emoji">{emoji}</span>
-                  <span className="hof-bar-label">
-                    {EMOJI_LABELS[emoji]}
-                  </span>
-                  <div className="hof-bar-track">
+                  <span className="pulse-bar-emoji">{emoji}</span>
+                  <div className="pulse-bar-track">
                     <div
-                      className="hof-bar-fill"
-                      style={{ width: `${pct}%` }}
+                      className="pulse-bar-fill"
+                      style={{
+                        width: `${pct}%`,
+                        background: isDominant ? vibeColor : undefined,
+                      }}
                     />
                   </div>
-                  <span className="hof-bar-count">{count}</span>
+                  <span className="pulse-bar-count">{count}</span>
                 </div>
               );
             })}
           </div>
         </div>
 
-        {/* Screenshot-friendly footer */}
-        <div className="hof-footer">
-          <span className="hof-watermark">VERDICT — {stats.date}</span>
+        {/* ── 7-Day Mood Timeline ── */}
+        {weekStats.length > 1 && (
+          <div className="pulse-timeline">
+            <span className="pulse-section-label">7-Day Mood</span>
+            <div className="pulse-timeline-row">
+              {weekStats.map((day) => {
+                const dom = getDominant(day.emojiTotals || {});
+                const height = weekMax > 0
+                  ? Math.max(8, ((day.totalReactions || 0) / weekMax) * 56)
+                  : 8;
+                const color = dom ? VIBE_COLORS[dom] : "var(--hairline-strong)";
+                const isToday = day.date === todayStats.date;
+                return (
+                  <div
+                    className={`pulse-timeline-col ${isToday ? "today" : ""}`}
+                    key={day.date}
+                  >
+                    <span className="pulse-timeline-emoji">{dom || "·"}</span>
+                    <div className="pulse-timeline-bar-wrap">
+                      <div
+                        className="pulse-timeline-bar"
+                        style={{ height: `${height}px`, background: color }}
+                      />
+                    </div>
+                    <span className="pulse-timeline-date">
+                      {formatDateShort(day.date)}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ── Footer Watermark ── */}
+        <div className="pulse-footer">
+          <span className="pulse-watermark">THE PULSE — {todayStats.date}</span>
         </div>
       </div>
     </div>

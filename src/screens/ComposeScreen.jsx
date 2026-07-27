@@ -1,19 +1,24 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { collection, addDoc, doc, setDoc, onSnapshot } from "firebase/firestore";
 import { db, serverTimestamp } from "../firebase";
 import { useAuth } from "../context/AuthProvider";
 import { useDrop } from "../context/DropContext";
 import ConnectionTest from "../components/ConnectionTest";
+import useFeedback from "../hooks/useFeedback";
 
 const MAX_CHARS = 280;
+const DROP_CYCLE_SEC = 60;
 
 export default function ComposeScreen() {
   const { user } = useAuth();
   const { setIsComposing } = useDrop();
+  const { playTap, vibrate } = useFeedback();
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [queued, setQueued] = useState(false);
   const [isFrozen, setIsFrozen] = useState(false);
+  const [countdown, setCountdown] = useState(DROP_CYCLE_SEC);
+  const countdownRef = useRef(null);
 
   // ── Listen to user doc for frozen status ─────────────────────────────────
   useEffect(() => {
@@ -61,11 +66,15 @@ export default function ComposeScreen() {
         text: text.trim(),
         submittedAt: serverTimestamp(),
         authorUid: user.uid,
+        communityId: user.communityId, // Add the community ID here
         moderationStatus: "pending",
       });
 
       setText("");
       setQueued(true);
+      setCountdown(DROP_CYCLE_SEC);
+      playTap();
+      vibrate(30);
     } catch (err) {
       console.error("Failed to submit confession:", err);
       // TODO: surface error to user in a later iteration
@@ -76,7 +85,28 @@ export default function ComposeScreen() {
 
   function handleNewConfession() {
     setQueued(false);
+    setCountdown(DROP_CYCLE_SEC);
+    if (countdownRef.current) clearInterval(countdownRef.current);
   }
+
+  // ── Countdown timer when queued ────────────────────────────────────────────
+  useEffect(() => {
+    if (!queued) return;
+
+    countdownRef.current = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(countdownRef.current);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => {
+      if (countdownRef.current) clearInterval(countdownRef.current);
+    };
+  }, [queued]);
 
   // ── Frozen account state ─────────────────────────────────────────────────
   if (isFrozen) {
@@ -100,17 +130,48 @@ export default function ComposeScreen() {
 
   // ── Queued confirmation state ──────────────────────────────────────────────
   if (queued) {
+    const radius = 46;
+    const circumference = 2 * Math.PI * radius;
+    const progress = countdown / DROP_CYCLE_SEC;
+    const strokeOffset = circumference * progress;
+
     return (
       <div className="screen" id="compose-screen">
         <div className="queued-container">
-          <div className="queued-icon">📨</div>
-          <h1 className="screen-title">Queued</h1>
-          <p className="screen-subtitle">
-            Your confession is queued for the next drop. Sit tight — the crowd
-            will see it within 60 seconds.
-          </p>
+          <div className="countdown-ring-wrap">
+            <svg className="countdown-ring" viewBox="0 0 100 100">
+              <circle
+                className="countdown-ring-bg"
+                cx="50" cy="50" r={radius}
+              />
+              <circle
+                className="countdown-ring-fill"
+                cx="50" cy="50" r={radius}
+                strokeDasharray={circumference}
+                strokeDashoffset={circumference - strokeOffset}
+                transform="rotate(-90 50 50)"
+              />
+            </svg>
+            <div className="countdown-inner">
+              {countdown > 0 ? (
+                <>
+                  <span className="countdown-number">{countdown}</span>
+                  <span className="countdown-unit">sec</span>
+                </>
+              ) : (
+                <span className="countdown-done">📡</span>
+              )}
+            </div>
+          </div>
 
-          <div className="queued-pulse-ring" />
+          <h1 className="screen-title">
+            {countdown > 0 ? "Queued" : "Dropping now…"}
+          </h1>
+          <p className="screen-subtitle">
+            {countdown > 0
+              ? "Your confession is waiting for the next drop cycle."
+              : "Your confession is being broadcast to the crowd!"}
+          </p>
 
           <button
             className="compose-btn secondary"
@@ -132,7 +193,7 @@ export default function ComposeScreen() {
       <div className="screen-icon">✍️</div>
       <h1 className="screen-title">Compose</h1>
       <p className="screen-subtitle">
-        Write your anonymous confession. No one will ever know it was you.
+        Write your anonymous confession. It will only drop to users in <strong>{user?.communityId}</strong>.
       </p>
 
       <div className="compose-card glass-card">

@@ -4,7 +4,7 @@
 // ──────────────────────────────────────────────────────────────────────────────
 
 import { initializeApp } from "firebase/app";
-import { getAuth, signInAnonymously } from "firebase/auth";
+import { getAuth, signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, signOut } from "firebase/auth";
 import { getFirestore, serverTimestamp, doc, setDoc } from "firebase/firestore";
 
 export { serverTimestamp, doc, setDoc };
@@ -22,9 +22,28 @@ const firebaseConfig = {
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
-// Auth — anonymous sign-in helper
+// Auth
 export const auth = getAuth(app);
-export const loginAnonymously = () => signInAnonymously(auth);
+const googleProvider = new GoogleAuthProvider();
+
+// Try popup first; if it fails (mobile / blocked), fall back to redirect
+export const loginWithGoogle = async () => {
+  try {
+    return await signInWithPopup(auth, googleProvider);
+  } catch (err) {
+    if (err.code === "auth/popup-blocked" || err.code === "auth/cancelled-popup-request") {
+      return signInWithRedirect(auth, googleProvider);
+    }
+    throw err;
+  }
+};
+
+// Handle redirect result on page load (no-op if no redirect occurred)
+getRedirectResult(auth).catch((err) => {
+  console.warn("Redirect result check:", err.message);
+});
+
+export const logout = () => signOut(auth);
 
 // Firestore
 export const db = getFirestore(app);
