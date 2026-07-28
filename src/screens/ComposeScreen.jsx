@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { collection, addDoc, doc, setDoc, onSnapshot } from "firebase/firestore";
-import { db, serverTimestamp } from "../firebase";
+import { db, serverTimestamp, auth, API_URL } from "../firebase";
 import { useAuth } from "../context/AuthProvider";
 import { useDrop } from "../context/DropContext";
 import ConnectionTest from "../components/ConnectionTest";
@@ -62,13 +62,22 @@ export default function ComposeScreen() {
         lastSeen: serverTimestamp(),
       });
 
-      await addDoc(collection(db, "pendingConfessions"), {
-        text: text.trim(),
-        submittedAt: serverTimestamp(),
-        authorUid: user.uid,
-        communityId: user.communityId, // Add the community ID here
-        moderationStatus: "pending",
+      const token = await auth.currentUser.getIdToken();
+      const res = await fetch(`${API_URL}/confess`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          text: text.trim(),
+          communityId: user.communityId,
+        }),
       });
+      const result = await res.json();
+      if (!res.ok) {
+        throw new Error(result.error || "Submission failed");
+      }
 
       setText("");
       setQueued(true);

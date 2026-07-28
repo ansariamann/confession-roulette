@@ -15,6 +15,13 @@
         { "fieldPath": "status", "order": "ASCENDING" },
         { "fieldPath": "broadcastStartedAt", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "wsConnections",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "dropId", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

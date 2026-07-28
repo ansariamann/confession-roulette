@@ -7,10 +7,8 @@ service cloud.firestore {
     // Nobody reads, updates, or deletes from the client — only the server
     // (via Admin SDK) mutates moderationStatus.
     match /pendingConfessions/{docId} {
-      allow create: if request.auth != null
-                    && request.resource.data.authorUid == request.auth.uid
-                    && request.resource.data.moderationStatus == "pending";
-      allow read, update, delete: if false;
+      // All writes handled by Moderate Lambda (Admin SDK — bypasses rules)
+      allow read, update, delete, create: if false;
     }
 
     // ── moderationLog ───────────────────────────────────────────────────────
@@ -41,10 +39,8 @@ service cloud.firestore {
     // Auth'd users can create reports during live drops. Write-only:
     // no read access, no updates, no deletes from the client.
     match /reports/{docId} {
-      allow create: if request.auth != null
-                    && request.resource.data.keys().hasAll(['dropId', 'reporterUid'])
-                    && request.resource.data.reporterUid == request.auth.uid;
-      allow read, update, delete: if false;
+      // All writes handled by Report Lambda (Admin SDK — bypasses rules)
+      allow read, update, delete, create: if false;
     }
 
     // ── presence ────────────────────────────────────────────────────────────
@@ -142,6 +138,12 @@ service cloud.firestore {
                     && request.resource.data.keys().hasAll(['name', 'nameLower', 'type', 'createdAt', 'memberCount'])
                     && request.resource.data.memberCount == 1;
       allow update, delete: if false;
+    }
+
+    // ── wsConnections ────────────────────────────────────────────────────────
+    // WebSocket connections tracking. No client access (Admin SDK only).
+    match /wsConnections/{connectionId} {
+      allow read, write: if false;
     }
 
     // ── _connectionTest ─────────────────────────────────────────────────────

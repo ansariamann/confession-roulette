@@ -12,14 +12,11 @@ import {
   query,
   orderBy,
 } from "firebase/firestore";
-import { db } from "../firebase";
+import { db, auth, API_URL, WS_URL } from "../firebase";
 import { useAuth } from "../context/AuthProvider";
 import { useDrop } from "../context/DropContext";
-import { io } from "socket.io-client";
 import useFeedback from "../hooks/useFeedback";
 
-const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || "http://localhost:3001";
-const socket = io(SOCKET_URL, { autoConnect: false });
 
 const EMOJIS = ["😂", "💀", "😬", "❤️", "😳"];
 const EMOJI_LABELS = {
@@ -102,13 +99,8 @@ export default function LiveDropScreen() {
 
   const currentDrop = visibleDrops[currentIndex] || null;
 
-  // ── Manage Socket.IO connection ───────────────────────────────────────────
-  useEffect(() => {
-    socket.connect();
-    return () => {
-      socket.disconnect();
-    };
-  }, []);
+  // Native WebSockets don't need global connection like Socket.io did.
+  // We'll manage the connection per-drop below.
 
   // ── Record viewStart for current card & run 20s countdown ──────────────────
   useEffect(() => {
@@ -207,33 +199,35 @@ export default function LiveDropScreen() {
       .catch(() => {}); // Ignore errors (drop may have been deleted)
   }, [currentDrop, user]);
 
-  // ── Listen to comments for current drop (via Socket.IO) ────────────────────
+  // ── Listen to comments for current drop (via API Gateway WebSocket) ────────────────────
+  const wsRef = useRef(null);
+  
   useEffect(() => {
     if (!currentDrop) return;
     const dropId = currentDrop.id;
 
-    // Join the drop room
-    socket.emit("join_drop", dropId);
+    // Connect to WebSocket with dropId
+    const ws = new WebSocket(`${WS_URL}?dropId=${dropId}`);
+    wsRef.current = ws;
 
-    // Initial load for late joiners
-    const handleInitialComments = (initialComments) => {
-      setCommentsMap((prev) => ({ ...prev, [dropId]: initialComments }));
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === "new_comment") {
+          setCommentsMap((prev) => {
+            const existing = prev[dropId] || [];
+            return { ...prev, [dropId]: [...existing, data.comment] };
+          });
+        }
+      } catch (err) {
+        console.error("Failed to parse WS message", err);
+      }
     };
-
-    // Live new comments
-    const handleNewComment = (commentObj) => {
-      setCommentsMap((prev) => {
-        const existing = prev[dropId] || [];
-        return { ...prev, [dropId]: [...existing, commentObj] };
-      });
-    };
-
-    socket.on("initial_comments", handleInitialComments);
-    socket.on("new_comment", handleNewComment);
 
     return () => {
-      socket.off("initial_comments", handleInitialComments);
-      socket.off("new_comment", handleNewComment);
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+        ws.close();
+      }
     };
   }, [currentDrop]);
 
@@ -309,12 +303,18 @@ export default function LiveDropScreen() {
       setReportedMap((prev) => ({ ...prev, [dropId]: true }));
 
       try {
-        await addDoc(collection(db, "reports"), {
-          dropId,
-          reporterUid: user.uid,
-          confessionText: currentDrop.text,
-          reportedAt: serverTimestamp(),
+        const token = await auth.currentUser.getIdToken();
+        const res = await fetch(`${API_URL}/report`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`,
+          },
+          body: JSON.stringify({ dropId }),
         });
+        if (!res.ok) {
+          throw new Error("Failed to report");
+        }
       } catch (err) {
         console.error("Report failed:", err);
         setReportedMap((prev) => ({ ...prev, [dropId]: false }));
@@ -335,8 +335,14 @@ export default function LiveDropScreen() {
       setCommentedMap((prev) => ({ ...prev, [dropId]: true }));
       setCommentText("");
 
-      // Send to Socket.IO instead of Firestore
-      socket.emit("send_comment", { dropId, text: trimmed });
+      // Send via WebSocket
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({
+          action: "send_comment",
+          dropId,
+          text: trimmed,
+        }));
+      }
     },
     [currentDrop, user, commentText, commentedMap],
   );
