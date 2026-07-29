@@ -7,8 +7,11 @@ service cloud.firestore {
     // Nobody reads, updates, or deletes from the client — only the server
     // (via Admin SDK) mutates moderationStatus.
     match /pendingConfessions/{docId} {
-      // All writes handled by Moderate Lambda (Admin SDK — bypasses rules)
-      allow read, update, delete, create: if false;
+      // Authors can read their own confession status (e.g. passed → scheduled).
+      // All writes handled by Moderate Lambda (Admin SDK — bypasses rules).
+      allow read: if request.auth != null
+                  && resource.data.authorUid == request.auth.uid;
+      allow update, delete, create: if false;
     }
 
     // ── moderationLog ───────────────────────────────────────────────────────
@@ -55,17 +58,15 @@ service cloud.firestore {
     // Only the server creates/updates drops.
     match /drops/{docId} {
       allow read: if request.auth != null
-                  && request.auth.uid in resource.data.recipientUids;
+                  && (request.auth.uid in resource.data.recipientUids || request.auth.uid == resource.data.authorUid);
       allow write: if false;
 
       // ── reactions subcollection under drops ──────────────────────────────
-      // Clients who are recipients of the parent drop can read reaction counts
-      // and increment them. Never store which user reacted.
+      // Clients who are recipients (or the author) of the parent drop can read reaction counts
+      // Recipients can increment them. Never store which user reacted.
       match /reactions/{emojiType} {
         allow read: if request.auth != null
-                    && request.auth.uid in
-                       get(/databases/$(database)/documents/drops/$(docId))
-                         .data.recipientUids;
+                    && (request.auth.uid in get(/databases/$(database)/documents/drops/$(docId)).data.recipientUids || request.auth.uid == get(/databases/$(database)/documents/drops/$(docId)).data.authorUid);
         allow update: if request.auth != null
                       && request.auth.uid in
                          get(/databases/$(database)/documents/drops/$(docId))
@@ -97,9 +98,7 @@ service cloud.firestore {
       // in the comment doc — comments are fully anonymous and ephemeral.
       match /comments/{commentId} {
         allow read: if request.auth != null
-                    && request.auth.uid in
-                       get(/databases/$(database)/documents/drops/$(docId))
-                         .data.recipientUids;
+                    && (request.auth.uid in get(/databases/$(database)/documents/drops/$(docId)).data.recipientUids || request.auth.uid == get(/databases/$(database)/documents/drops/$(docId)).data.authorUid);
         allow create: if request.auth != null
                       && request.auth.uid in
                          get(/databases/$(database)/documents/drops/$(docId))

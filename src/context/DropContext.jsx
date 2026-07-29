@@ -3,12 +3,28 @@
 // across ALL screens, AND listens for author verdicts for the confession author.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { createContext, useContext, useState, useEffect, useRef } from "react";
+import { createContext, useContext, useState, useEffect, useRef, useCallback } from "react";
 import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase";
 import { useAuth } from "./AuthProvider";
+import { DROP_DURATION_MS } from "../constants";
 
-const DROP_TOTAL_LIFETIME_MS = 60_000;
+const SEEN_DROPS_KEY = "seen-drop-ids";
+
+function loadSeenDropIds() {
+  try {
+    const raw = sessionStorage.getItem(SEEN_DROPS_KEY);
+    return raw ? new Set(JSON.parse(raw)) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function saveSeenDropIds(ids) {
+  try {
+    sessionStorage.setItem(SEEN_DROPS_KEY, JSON.stringify([...ids]));
+  } catch {}
+}
 
 const DropContext = createContext({
   /** Array of active drops targeted to the user: [{ id, text, broadcastStartedAt }] */
@@ -17,6 +33,8 @@ const DropContext = createContext({
   pendingDrop: null,
   /** Call from LiveDropScreen to claim the drop and clear it from context */
   consumeDrop: () => {},
+  /** Mark a drop as seen so auto-nav won't re-trigger for it */
+  markDropSeen: () => {},
   /** Array of verdicts for confessions submitted by the author: [{ id, dropId, reactions, ... }] */
   authorVerdicts: [],
   /** The pending verdict for the confession author: { id, dropId, reactions, ... } | null */
@@ -36,21 +54,22 @@ export function useDrop() {
 export default function DropProvider({ children }) {
   const { user } = useAuth();
 
-  // Array of active drops targeting the user
   const [activeDrops, setActiveDrops] = useState([]);
-  // The latest incoming drop for recipients
   const [pendingDrop, setPendingDrop] = useState(null);
-
-  // Array of verdicts for the author
   const [authorVerdicts, setAuthorVerdicts] = useState([]);
-  // The latest verdict for the author
   const [pendingVerdict, setPendingVerdict] = useState(null);
-
-  // Whether the user is mid-composition
   const [isComposing, setIsComposing] = useState(false);
 
-  // Track the ID of the drop currently being displayed to avoid re-triggering
-  const activeDropIdRef = useRef(null);
+  const seenDropIdsRef = useRef(loadSeenDropIds());
+  const knownVerdictIdsRef = useRef(null);
+  const pendingVerdictQueueRef = useRef([]);
+
+  const markDropSeen = useCallback((dropId) => {
+    if (!dropId) return;
+    seenDropIdsRef.current.add(dropId);
+    saveSeenDropIds(seenDropIdsRef.current);
+    setPendingDrop((prev) => (prev?.id === dropId ? null : prev));
+  }, []);
 
   // ── Global Firestore listener for broadcasting drops (recipients) ────────
   useEffect(() => {
@@ -70,38 +89,47 @@ export default function DropProvider({ children }) {
           const data = docSnap.data();
           const broadcastStartedAt = data.broadcastStartedAt;
 
-          if (!broadcastStartedAt) return;
+          if (!broadcastStartedAt || typeof broadcastStartedAt.toMillis !== "function") {
+            return;
+          }
 
-          const startMs = typeof broadcastStartedAt.toMillis === "function"
-            ? broadcastStartedAt.toMillis()
-            : Date.now();
+          const startMs = broadcastStartedAt.toMillis();
           const elapsed = Date.now() - startMs;
 
-          if (elapsed < DROP_TOTAL_LIFETIME_MS) {
+          if (elapsed < DROP_DURATION_MS) {
             dropsList.push({
               id: docSnap.id,
               text: data.text,
               broadcastStartedAt: startMs,
             });
+          } else {
+            // Drop expired server-side — mark seen so we don't re-notify
+            seenDropIdsRef.current.add(docSnap.id);
           }
         });
 
+        saveSeenDropIds(seenDropIdsRef.current);
+
         setActiveDrops(dropsList);
-        setPendingDrop(dropsList.length > 0 ? dropsList[0] : null);
+
+        // Only notify for drops the user hasn't been pulled in for yet
+        const unseenDrop = dropsList.find((d) => !seenDropIdsRef.current.has(d.id));
+        setPendingDrop(unseenDrop || null);
       },
       (error) => {
         console.error("❌ Drop listener error in DropContext:", error);
-      }
+      },
     );
 
     return () => unsub();
   }, [user]);
 
-  const sessionStartMs = useRef(Date.now() - 5000);
-
   // ── Global Firestore listener for author verdicts ────────────────────────
   useEffect(() => {
     if (!user) return;
+
+    knownVerdictIdsRef.current = null;
+    pendingVerdictQueueRef.current = [];
 
     const q = query(
       collection(db, "verdicts"),
@@ -109,61 +137,58 @@ export default function DropProvider({ children }) {
     );
 
     const unsub = onSnapshot(q, (snapshot) => {
-      const verdictsList = [];
-      snapshot.docs.forEach((docSnap) => {
-        const data = docSnap.data();
-        const expiredAtMs = data.expiredAt?.toMillis ? data.expiredAt.toMillis() : Date.now();
+      const isInitial = knownVerdictIdsRef.current === null;
+      if (isInitial) {
+        knownVerdictIdsRef.current = new Set();
+      }
 
-        if (expiredAtMs >= sessionStartMs.current) {
-          verdictsList.push({
-            id: docSnap.id,
-            ...data,
-          });
+      const verdictsList = [];
+      const newVerdicts = [];
+
+      snapshot.docs.forEach((docSnap) => {
+        const id = docSnap.id;
+        const data = docSnap.data();
+        verdictsList.push({ id, ...data });
+
+        if (!knownVerdictIdsRef.current.has(id)) {
+          knownVerdictIdsRef.current.add(id);
+          if (!isInitial) {
+            newVerdicts.push({ id, ...data });
+          }
         }
       });
 
-      // Sort verdicts by most recent first
       verdictsList.sort((a, b) => {
         const aMs = a.expiredAt?.toMillis ? a.expiredAt.toMillis() : 0;
         const bMs = b.expiredAt?.toMillis ? b.expiredAt.toMillis() : 0;
         return bMs - aMs;
       });
 
-      setAuthorVerdicts(verdictsList);
+      // Keep only the 20 most recent verdicts in memory
+      setAuthorVerdicts(verdictsList.slice(0, 20));
 
-      snapshot.docChanges().forEach((change) => {
-        if (change.type === "added") {
-          const data = change.doc.data();
-          const expiredAtMs = data.expiredAt?.toMillis ? data.expiredAt.toMillis() : Date.now();
-
-          // Only accept fresh verdicts created after session start
-          if (expiredAtMs >= sessionStartMs.current) {
-            setPendingVerdict({
-              id: change.doc.id,
-              ...data,
-            });
-          }
-        }
-      });
+      if (newVerdicts.length > 0) {
+        pendingVerdictQueueRef.current.push(...newVerdicts);
+        setPendingVerdict(pendingVerdictQueueRef.current[0]);
+      }
     });
 
     return () => unsub();
   }, [user]);
 
-  // ── Consume helpers ──────────────────────────────────────────────────────
   function consumeDrop() {
     if (pendingDrop) {
-      activeDropIdRef.current = pendingDrop.id;
+      markDropSeen(pendingDrop.id);
     }
-    setPendingDrop(null);
-  }
-
-  function clearActiveDrop() {
-    activeDropIdRef.current = null;
   }
 
   function consumeVerdict() {
-    setPendingVerdict(null);
+    pendingVerdictQueueRef.current.shift();
+    setPendingVerdict(
+      pendingVerdictQueueRef.current.length > 0
+        ? pendingVerdictQueueRef.current[0]
+        : null,
+    );
   }
 
   return (
@@ -172,7 +197,7 @@ export default function DropProvider({ children }) {
         activeDrops,
         pendingDrop,
         consumeDrop,
-        clearActiveDrop,
+        markDropSeen,
         authorVerdicts,
         pendingVerdict,
         consumeVerdict,

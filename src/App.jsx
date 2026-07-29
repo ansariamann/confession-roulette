@@ -122,23 +122,28 @@ function Header() {
 }
 
 /**
- * Auto-navigates the user to /live when a new drop arrives and the user
- * is not actively composing a confession. This lets users be "pulled in"
- * from any screen — Compose (queued state), Verdict, or just idle.
+ * Auto-navigates the user to /live when a NEW drop arrives and the user
+ * is not actively composing or viewing a verdict. Only fires once per drop.
  */
 function DropAutoNav() {
-  const { pendingDrop, pendingVerdict, consumeVerdict, isComposing } = useDrop();
+  const { pendingDrop, pendingVerdict, consumeVerdict, consumeDrop, isComposing } = useDrop();
   const navigate = useNavigate();
   const location = useLocation();
 
-  // Pull recipients to /live when a drop arrives (if not actively typing)
+  // Pull recipients to /live when a new unseen drop arrives
   useEffect(() => {
     if (!pendingDrop) return;
     if (isComposing) return;
-    if (location.pathname === "/live") return;
+    // Don't interrupt verdict viewing
+    if (location.pathname.startsWith("/verdict")) return;
+    if (location.pathname === "/live") {
+      consumeDrop();
+      return;
+    }
 
+    consumeDrop();
     navigate("/live", { replace: true });
-  }, [pendingDrop, isComposing, location.pathname, navigate]);
+  }, [pendingDrop, isComposing, location.pathname, navigate, consumeDrop]);
 
   // Pull author to /verdict/:dropId when their confession verdict arrives
   useEffect(() => {

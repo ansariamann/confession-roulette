@@ -1,9 +1,16 @@
 import { createContext, useContext, useEffect, useState, useRef } from "react";
 import { onAuthStateChanged } from "firebase/auth";
-import { auth, loginWithGoogle, logout, db, doc, setDoc } from "../firebase";
-import { getDoc, serverTimestamp } from "firebase/firestore";
+import { auth, loginWithGoogle, logout, db, doc, API_URL } from "../firebase";
+import { getDoc, serverTimestamp, setDoc } from "firebase/firestore";
 
-const AuthContext = createContext({ user: null, loading: true, login: () => {}, logout: () => {}, updateCommunity: () => {} });
+const AuthContext = createContext({
+  user: null,
+  loading: true,
+  login: () => {},
+  logout: () => {},
+  updateCommunity: () => {},
+  communityStats: null,
+});
 
 export function useAuth() {
   return useContext(AuthContext);
@@ -21,18 +28,18 @@ async function writeHeartbeat(uid, communityId) {
     }
     await setDoc(doc(db, "presence", uid), payload, { merge: true });
   } catch (err) {
-    // Non-fatal — presence is best-effort
     console.warn("Heartbeat write failed:", err.message);
   }
 }
 
-const HEARTBEAT_INTERVAL_MS = 30_000; // 30 seconds
+const HEARTBEAT_INTERVAL_MS = 30_000;
 
 export default function AuthProvider({ children }) {
-  const [user, setUser] = useState(null); // { uid, email, displayName, photoURL, communityId }
+  const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [communityStats, setCommunityStats] = useState(null);
   const heartbeatRef = useRef(null);
-  const communityRef = useRef(null); // Always tracks the latest communityId
+  const communityRef = useRef(null);
 
   const fetchUserDoc = async (uid) => {
     try {
@@ -46,13 +53,37 @@ export default function AuthProvider({ children }) {
     return null;
   };
 
-  const updateCommunity = async (newCommunityId) => {
-    if (!user) return;
+  /**
+   * Join or switch community via server API.
+   * Server updates users/{uid}, member counts, and presence atomically.
+   */
+  const updateCommunity = async (newCommunityName) => {
+    if (!user) return null;
     try {
-      await setDoc(doc(db, "users", user.uid), { communityId: newCommunityId }, { merge: true });
-      communityRef.current = newCommunityId;
-      setUser(prev => ({ ...prev, communityId: newCommunityId }));
-      writeHeartbeat(user.uid, newCommunityId);
+      const token = await auth.currentUser.getIdToken();
+      const res = await fetch(`${API_URL}/community/join`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ communityName: newCommunityName }),
+      });
+
+      const result = await res.json();
+      if (!res.ok) {
+        throw new Error(result.error || "Failed to join community");
+      }
+
+      communityRef.current = result.communityId;
+      setUser((prev) => ({ ...prev, communityId: result.communityId }));
+      setCommunityStats({
+        memberCount: result.memberCount,
+        activeCount: result.activeCount,
+      });
+      writeHeartbeat(user.uid, result.communityId);
+
+      return result;
     } catch (err) {
       console.error("Failed to update community:", err);
       throw err;
@@ -60,10 +91,8 @@ export default function AuthProvider({ children }) {
   };
 
   useEffect(() => {
-    // Listen for auth state changes
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
-        // Fetch custom data from Firestore
         const userData = await fetchUserDoc(firebaseUser.uid);
         const communityId = userData?.communityId || null;
         communityRef.current = communityId;
@@ -79,7 +108,6 @@ export default function AuthProvider({ children }) {
         setUser(enhancedUser);
         setLoading(false);
 
-        // ── Presence heartbeat ─────────────────────────────────────────────
         writeHeartbeat(enhancedUser.uid, communityId);
 
         if (heartbeatRef.current) clearInterval(heartbeatRef.current);
@@ -88,6 +116,7 @@ export default function AuthProvider({ children }) {
         }, HEARTBEAT_INTERVAL_MS);
       } else {
         setUser(null);
+        setCommunityStats(null);
         setLoading(false);
         communityRef.current = null;
         if (heartbeatRef.current) clearInterval(heartbeatRef.current);
@@ -101,7 +130,16 @@ export default function AuthProvider({ children }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, loading, login: loginWithGoogle, logout, updateCommunity }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        loading,
+        login: loginWithGoogle,
+        logout,
+        updateCommunity,
+        communityStats,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

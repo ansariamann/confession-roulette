@@ -16,6 +16,7 @@ import { db, auth, API_URL, WS_URL } from "../firebase";
 import { useAuth } from "../context/AuthProvider";
 import { useDrop } from "../context/DropContext";
 import useFeedback from "../hooks/useFeedback";
+import { DROP_DURATION_MS } from "../constants";
 
 
 const EMOJIS = ["😂", "💀", "😬", "❤️", "😳"];
@@ -26,24 +27,47 @@ const EMOJI_LABELS = {
   "❤️": "Respect",
   "😳": "No way",
 };
-const USER_VIEW_DURATION_MS = 30_000;  // 30s per user reading & voting window
+const USER_VIEW_DURATION_MS = DROP_DURATION_MS;
+const COUNTDOWN_TICK_MS = 500;
 const MAX_COMMENT_LENGTH = 80;
+const EXPIRED_DROPS_KEY = "expired-drop-ids";
+
+function loadExpiredMap() {
+  try {
+    const raw = sessionStorage.getItem(EXPIRED_DROPS_KEY);
+    if (!raw) return {};
+    const ids = JSON.parse(raw);
+    return Object.fromEntries(ids.map((id) => [id, true]));
+  } catch {
+    return {};
+  }
+}
+
+function saveExpiredMap(map) {
+  try {
+    const ids = Object.keys(map).filter((id) => map[id]);
+    sessionStorage.setItem(EXPIRED_DROPS_KEY, JSON.stringify(ids));
+  } catch {}
+}
+
+function remainingMsForDrop(drop) {
+  if (!drop?.broadcastStartedAt) return USER_VIEW_DURATION_MS;
+  const elapsed = Date.now() - drop.broadcastStartedAt;
+  return Math.max(0, USER_VIEW_DURATION_MS - elapsed);
+}
 
 export default function LiveDropScreen() {
   const { user } = useAuth();
-  const { activeDrops } = useDrop();
+  const { activeDrops, markDropSeen } = useDrop();
   const { playReaction, playDrop, vibrate } = useFeedback();
 
-  // Map of drops that have completed their 20s viewing window for this recipient: { [dropId]: boolean }
-  const [expiredMap, setExpiredMap] = useState({});
+  // Map of drops that have completed their viewing window for this recipient
+  const [expiredMap, setExpiredMap] = useState(loadExpiredMap);
 
   // Swiping card index within visible (unexpired) drops
   const [currentIndex, setCurrentIndex] = useState(0);
 
-  // Map recording viewStart timestamp per drop ID so timer ONLY starts when user views card
-  const viewStartMapRef = useRef({});
-
-  // Countdown remaining time for current active card
+  // Countdown remaining time for current active card (synced to server drop lifetime)
   const [userRemainingMs, setUserRemainingMs] = useState(USER_VIEW_DURATION_MS);
 
   // Reaction counts per drop ID: { [dropId]: { "😂": 2, ... } }
@@ -87,6 +111,25 @@ export default function LiveDropScreen() {
   // Current comment text being typed
   const [commentText, setCommentText] = useState("");
 
+  // Mark already-expired drops on load (survives page reload)
+  useEffect(() => {
+    if (activeDrops.length === 0) return;
+
+    const updates = {};
+    for (const drop of activeDrops) {
+      if (!expiredMap[drop.id] && remainingMsForDrop(drop) <= 0) {
+        updates[drop.id] = true;
+      }
+    }
+    if (Object.keys(updates).length > 0) {
+      setExpiredMap((prev) => {
+        const next = { ...prev, ...updates };
+        saveExpiredMap(next);
+        return next;
+      });
+    }
+  }, [activeDrops]);
+
   // Filter to active drops that have NOT expired for this user
   const visibleDrops = activeDrops.filter((d) => !expiredMap[d.id]);
 
@@ -99,39 +142,35 @@ export default function LiveDropScreen() {
 
   const currentDrop = visibleDrops[currentIndex] || null;
 
-  // Native WebSockets don't need global connection like Socket.io did.
-  // We'll manage the connection per-drop below.
+  // Mark drop as seen so auto-nav won't re-trigger after manual navigation
+  useEffect(() => {
+    if (!currentDrop) return;
+    markDropSeen(currentDrop.id);
+  }, [currentDrop, markDropSeen]);
 
-  // ── Record viewStart for current card & run 20s countdown ──────────────────
+  // ── Server-synced countdown for current card ───────────────────────────────
   useEffect(() => {
     if (!currentDrop) return;
 
-    // Record view start timestamp if not already recorded (timer starts on active view!)
-    if (!viewStartMapRef.current[currentDrop.id]) {
-      viewStartMapRef.current[currentDrop.id] = Date.now();
-    }
-
-    const startMs = viewStartMapRef.current[currentDrop.id];
-
     const tick = () => {
-      const elapsed = Date.now() - startMs;
-      const remaining = Math.max(0, USER_VIEW_DURATION_MS - elapsed);
-
+      const remaining = remainingMsForDrop(currentDrop);
       setUserRemainingMs(remaining);
 
       if (remaining <= 0) {
-        // Current card 20s window finished — mark expired so card disappears immediately
-        setExpiredMap((prev) => ({ ...prev, [currentDrop.id]: true }));
-        return;
+        setExpiredMap((prev) => {
+          const next = { ...prev, [currentDrop.id]: true };
+          saveExpiredMap(next);
+          return next;
+        });
       }
-
-      countdownRef.current = requestAnimationFrame(tick);
     };
 
-    countdownRef.current = requestAnimationFrame(tick);
+    setUserRemainingMs(remainingMsForDrop(currentDrop));
+    tick();
+    countdownRef.current = setInterval(tick, COUNTDOWN_TICK_MS);
 
     return () => {
-      if (countdownRef.current) cancelAnimationFrame(countdownRef.current);
+      if (countdownRef.current) clearInterval(countdownRef.current);
     };
   }, [currentDrop]);
 
@@ -199,14 +238,23 @@ export default function LiveDropScreen() {
       .catch(() => {}); // Ignore errors (drop may have been deleted)
   }, [currentDrop, user]);
 
-  // ── Listen to comments for current drop (via API Gateway WebSocket) ────────────────────
+  // ── Load existing comments from Firestore, then listen via WebSocket ───────
   const wsRef = useRef(null);
-  
+
   useEffect(() => {
     if (!currentDrop) return;
     const dropId = currentDrop.id;
 
-    // Connect to WebSocket with dropId
+    const commentsQuery = query(
+      collection(db, "drops", dropId, "comments"),
+      orderBy("createdAt", "asc"),
+    );
+
+    const unsub = onSnapshot(commentsQuery, (snapshot) => {
+      const comments = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+      setCommentsMap((prev) => ({ ...prev, [dropId]: comments }));
+    });
+
     const ws = new WebSocket(`${WS_URL}?dropId=${dropId}`);
     wsRef.current = ws;
 
@@ -216,6 +264,7 @@ export default function LiveDropScreen() {
         if (data.type === "new_comment") {
           setCommentsMap((prev) => {
             const existing = prev[dropId] || [];
+            if (existing.some((c) => c.id === data.comment.id)) return prev;
             return { ...prev, [dropId]: [...existing, data.comment] };
           });
         }
@@ -225,6 +274,7 @@ export default function LiveDropScreen() {
     };
 
     return () => {
+      unsub();
       if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
         ws.close();
       }

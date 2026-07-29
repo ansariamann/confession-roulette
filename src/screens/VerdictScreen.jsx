@@ -294,6 +294,19 @@ export default function VerdictScreen() {
           })}
         </div>
 
+        {/* Final Comments */}
+        {currentVerdict?.comments && currentVerdict.comments.length > 0 && (
+          <div className="comment-section static-comments" style={{ marginTop: '1rem', width: '100%' }}>
+            <div className="comment-stream" style={{ maxHeight: '150px', padding: '0.5rem', background: 'rgba(255,255,255,0.05)', borderRadius: '12px' }}>
+              {currentVerdict.comments.map((c) => (
+                <div className="comment-bubble" key={c.id}>
+                  <span className="comment-text">{c.text}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Auto-return indicator */}
         <p className="verdict-return-hint">
           Returning to compose shortly…

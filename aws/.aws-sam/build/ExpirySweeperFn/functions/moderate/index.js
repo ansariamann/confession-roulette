@@ -15,6 +15,7 @@
 
 const { db, FieldValue } = require("../../shared/firebase-admin");
 const { checkPII, checkContentSafety, logRejection } = require("../../shared/moderation");
+const { scheduleConfessionById } = require("../../shared/schedule-drop");
 
 // Firebase Auth — verify ID tokens
 const { getAuth } = require("firebase-admin/auth");
@@ -82,7 +83,6 @@ exports.handler = async (event) => {
     }
 
     const text = body?.text?.trim();
-    const communityId = body?.communityId;
 
     if (!text || typeof text !== "string" || text.length === 0) {
       return response(400, { error: "Confession text is required" });
@@ -91,10 +91,18 @@ exports.handler = async (event) => {
       return response(400, { error: "Confession too long (max 280 characters)" });
     }
 
-    // ── Check frozen status ─────────────────────────────────────────────────
+    // ── Check frozen status + resolve community from server-side user doc ───
     const userDoc = await db.collection("users").doc(uid).get();
     if (userDoc.exists && userDoc.data().isFrozen === true) {
       return response(403, { error: "Your account is frozen due to multiple reports" });
+    }
+
+    const { normalizeCommunityId } = require("../../shared/community");
+    const userCommunity = userDoc.exists ? userDoc.data().communityId : null;
+    const communityId = normalizeCommunityId(userCommunity);
+
+    if (!userCommunity) {
+      return response(403, { error: "You must join a community before confessing" });
     }
 
     // ── Step 1: PII regex check (cheapest, runs first) ──────────────────────
@@ -137,21 +145,28 @@ exports.handler = async (event) => {
       text,
       submittedAt: FieldValue.serverTimestamp(),
       authorUid: uid,
-      communityId: communityId || "global",
+      communityId,
       moderationStatus: "passed",
     });
 
     // Also touch presence so the drop scheduler sees the author as active
     await db.collection("presence").doc(uid).set(
-      { lastSeen: FieldValue.serverTimestamp(), communityId: communityId || "global" },
+      { lastSeen: FieldValue.serverTimestamp(), communityId },
       { merge: true }
     );
 
     console.log(`✅ Confession ${confessionRef.id} passed moderation for ${uid}`);
 
+    // Drop immediately — don't wait for the scheduler tick
+    const dropResult = await scheduleConfessionById(
+      confessionRef.id,
+      process.env.EXPIRY_QUEUE_URL,
+    );
+
     return response(200, {
-      status: "queued",
+      status: dropResult ? "live" : "queued",
       confessionId: confessionRef.id,
+      dropId: dropResult?.dropId || null,
     });
   } catch (err) {
     console.error("Moderate Lambda error:", err);

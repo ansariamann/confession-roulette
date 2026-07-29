@@ -21,13 +21,11 @@ Resources:
   ExpiryQueue:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: confession-expiry-queue
       VisibilityTimeout: 120
       MessageRetentionPeriod: 3600
   LambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: confession-lambda-role
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -73,12 +71,14 @@ Resources:
         - Content-Type
         - Authorization
         AllowMethods:
+        - GET
         - POST
         - OPTIONS
   WebSocketApi:
     Type: AWS::ApiGatewayV2::Api
     Properties:
-      Name: confession-ws-api
+      Name:
+        Fn::Sub: ${AWS::StackName}-ws-api
       ProtocolType: WEBSOCKET
       RouteSelectionExpression: $request.body.action
   WebSocketStage:
@@ -92,13 +92,16 @@ Resources:
   ModerateFn:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: confession-moderate
       Handler: functions/moderate/index.handler
       Timeout: 30
       Role:
         Fn::GetAtt:
         - LambdaExecutionRole
         - Arn
+      Environment:
+        Variables:
+          EXPIRY_QUEUE_URL:
+            Ref: ExpiryQueue
       Events:
         PostConfess:
           Type: HttpApi
@@ -113,7 +116,6 @@ Resources:
   DropSchedulerFn:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: confession-drop-scheduler
       Handler: functions/drop-scheduler/index.handler
       Timeout: 60
       Role:
@@ -136,7 +138,6 @@ Resources:
   ExpirySweeperFn:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: confession-expiry-sweeper
       Handler: functions/expiry-sweeper/index.handler
       Timeout: 30
       Role:
@@ -155,10 +156,37 @@ Resources:
       CodeUri: ExpirySweeperFn
     Metadata:
       SamResourceId: ExpirySweeperFn
+  CommunityFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: functions/community/index.handler
+      Timeout: 15
+      MemorySize: 128
+      Role:
+        Fn::GetAtt:
+        - LambdaExecutionRole
+        - Arn
+      Events:
+        PostCommunityJoin:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: HttpApi
+            Path: /community/join
+            Method: POST
+        GetCommunityStats:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: HttpApi
+            Path: /community/stats
+            Method: GET
+      CodeUri: CommunityFn
+    Metadata:
+      SamResourceId: CommunityFn
   ReportHandlerFn:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: confession-report-handler
       Handler: functions/report-handler/index.handler
       Timeout: 10
       MemorySize: 128
@@ -180,7 +208,6 @@ Resources:
   HallOfFameRollupFn:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: confession-hall-of-fame
       Handler: functions/hall-of-fame/index.handler
       Timeout: 30
       Role:
@@ -199,7 +226,6 @@ Resources:
   WsConnectFn:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: confession-ws-connect
       Handler: functions/ws-connect/index.handler
       Timeout: 10
       MemorySize: 128
@@ -238,7 +264,6 @@ Resources:
   WsMessageFn:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: confession-ws-message
       Handler: functions/ws-message/index.handler
       Timeout: 10
       Role:
@@ -276,7 +301,6 @@ Resources:
   WsDisconnectFn:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: confession-ws-disconnect
       Handler: functions/ws-disconnect/index.handler
       Timeout: 10
       MemorySize: 128

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useAuth } from "../context/AuthProvider";
 import { useNavigate } from "react-router-dom";
 import CommunityPicker from "../components/CommunityPicker";
+import { useCommunityStats } from "../hooks/useCommunityStats";
 
 const PREFERENCE_TOGGLES = [
   { key: "darkMode", label: "Dark Mode", desc: "Toggle dark appearance" },
@@ -12,6 +13,7 @@ const PREFERENCE_TOGGLES = [
 
 export default function SettingsScreen() {
   const { user, logout, updateCommunity } = useAuth();
+  const { stats } = useCommunityStats(user?.communityId);
   const navigate = useNavigate();
   const [changingCommunity, setChangingCommunity] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -72,8 +74,16 @@ export default function SettingsScreen() {
               <div className="settings-community-badge">
                 <span className="settings-community-name">{user?.communityId || "Global"}</span>
               </div>
+              {stats && (
+                <p style={{ fontSize: "13px", color: "var(--ink)", margin: "8px 0 0 0", fontWeight: 500 }}>
+                  {stats.memberCount} {stats.memberCount === 1 ? "member" : "members"}
+                  {" · "}
+                  {stats.activeCount} online now
+                </p>
+              )}
               <p style={{ fontSize: "13px", color: "var(--muted)", margin: "8px 0 0 0" }}>
-                Your drops are only visible to users in this community.
+                Confessions only reach active users in this community. The server
+                reads your saved community from your account — not what the client sends.
               </p>
               <button
                 className="compose-btn secondary"

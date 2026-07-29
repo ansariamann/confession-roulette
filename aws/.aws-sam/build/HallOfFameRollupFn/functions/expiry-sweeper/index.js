@@ -53,7 +53,14 @@ async function processExpiredDrop(dropId, confessionId) {
       reactionTotals[doc.id] = doc.data().count || 0;
     });
 
-    // 2. Write verdict (reaction totals only — never the confession text)
+    // Capture comments
+    const commentsSnapshot = await dropRef.collection("comments").get();
+    const finalComments = [];
+    commentsSnapshot.forEach((doc) => {
+      finalComments.push({ id: doc.id, ...doc.data() });
+    });
+
+    // 2. Write verdict (reaction totals and comments only — never the confession text)
     await db.collection("verdicts").doc(dropId).set({
       dropId,
       confessionId: cId,
@@ -61,6 +68,7 @@ async function processExpiredDrop(dropId, confessionId) {
       recipientUids: dropData.recipientUids || [],
       recipientCount: dropData.recipientCount || 0,
       reactions: reactionTotals,
+      comments: finalComments,
       totalReactions: Object.values(reactionTotals).reduce((a, b) => a + b, 0),
       expiredAt: FieldValue.serverTimestamp(),
     });

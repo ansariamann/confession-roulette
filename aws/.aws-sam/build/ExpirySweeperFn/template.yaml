@@ -28,7 +28,7 @@ Resources:
   ExpiryQueue:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: confession-expiry-queue
+
       VisibilityTimeout: 120          # Must be >= Lambda timeout × 6
       MessageRetentionPeriod: 3600    # Keep failed messages for 1 hour
       # No DelaySeconds here — delay is set per-message by the drop scheduler
@@ -37,7 +37,7 @@ Resources:
   LambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: confession-lambda-role
+
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -83,6 +83,7 @@ Resources:
           - Content-Type
           - Authorization
         AllowMethods:
+          - GET
           - POST
           - OPTIONS
 
@@ -90,7 +91,7 @@ Resources:
   WebSocketApi:
     Type: AWS::ApiGatewayV2::Api
     Properties:
-      Name: confession-ws-api
+      Name: !Sub "${AWS::StackName}-ws-api"
       ProtocolType: WEBSOCKET
       RouteSelectionExpression: "$request.body.action"
 
@@ -105,10 +106,13 @@ Resources:
   ModerateFn:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: confession-moderate
+
       Handler: functions/moderate/index.handler
       Timeout: 30
       Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          EXPIRY_QUEUE_URL: !Ref ExpiryQueue
       Events:
         PostConfess:
           Type: HttpApi
@@ -117,11 +121,11 @@ Resources:
             Path: /confess
             Method: POST
 
-  # ── Lambda: Drop Scheduler (EventBridge cron — every 1 minute) ─────────────
+  # ── Lambda: Drop Scheduler (EventBridge — fallback every 1 minute) ─────────
   DropSchedulerFn:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: confession-drop-scheduler
+
       Handler: functions/drop-scheduler/index.handler
       Timeout: 60
       Role: !GetAtt LambdaExecutionRole.Arn
@@ -139,7 +143,7 @@ Resources:
   ExpirySweeperFn:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: confession-expiry-sweeper
+
       Handler: functions/expiry-sweeper/index.handler
       Timeout: 30
       Role: !GetAtt LambdaExecutionRole.Arn
@@ -150,11 +154,33 @@ Resources:
             Queue: !GetAtt ExpiryQueue.Arn
             BatchSize: 1
 
+  # ── Lambda: Community (POST /community/join, GET /community/stats) ─────────
+  CommunityFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: functions/community/index.handler
+      Timeout: 15
+      MemorySize: 128
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        PostCommunityJoin:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /community/join
+            Method: POST
+        GetCommunityStats:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /community/stats
+            Method: GET
+
   # ── Lambda: Report Handler (POST /report) ──────────────────────────────────
   ReportHandlerFn:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: confession-report-handler
+
       Handler: functions/report-handler/index.handler
       Timeout: 10
       MemorySize: 128
@@ -171,7 +197,7 @@ Resources:
   HallOfFameRollupFn:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: confession-hall-of-fame
+
       Handler: functions/hall-of-fame/index.handler
       Timeout: 30
       Role: !GetAtt LambdaExecutionRole.Arn
@@ -186,7 +212,7 @@ Resources:
   WsConnectFn:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: confession-ws-connect
+
       Handler: functions/ws-connect/index.handler
       Timeout: 10
       MemorySize: 128
@@ -218,7 +244,7 @@ Resources:
   WsMessageFn:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: confession-ws-message
+
       Handler: functions/ws-message/index.handler
       Timeout: 10
       Role: !GetAtt LambdaExecutionRole.Arn
@@ -249,7 +275,7 @@ Resources:
   WsDisconnectFn:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: confession-ws-disconnect
+
       Handler: functions/ws-disconnect/index.handler
       Timeout: 10
       MemorySize: 128

@@ -1,24 +1,71 @@
-import { useState, useEffect, useRef } from "react";
-import { collection, addDoc, doc, setDoc, onSnapshot } from "firebase/firestore";
+import { useState, useEffect } from "react";
+import { doc, setDoc, onSnapshot } from "firebase/firestore";
 import { db, serverTimestamp, auth, API_URL } from "../firebase";
 import { useAuth } from "../context/AuthProvider";
 import { useDrop } from "../context/DropContext";
 import ConnectionTest from "../components/ConnectionTest";
 import useFeedback from "../hooks/useFeedback";
+import { useCommunityStats } from "../hooks/useCommunityStats";
+import { DROP_DURATION_MS, DROP_DURATION_SEC } from "../constants";
 
 const MAX_CHARS = 280;
-const DROP_CYCLE_SEC = 60;
+
+function composeStorageKey(uid) {
+  return `compose-state-${uid}`;
+}
+
+function loadComposeState(uid) {
+  try {
+    const raw = sessionStorage.getItem(composeStorageKey(uid));
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveComposeState(uid, state) {
+  try {
+    if (state) {
+      sessionStorage.setItem(composeStorageKey(uid), JSON.stringify(state));
+    } else {
+      sessionStorage.removeItem(composeStorageKey(uid));
+    }
+  } catch {}
+}
 
 export default function ComposeScreen() {
   const { user } = useAuth();
-  const { setIsComposing } = useDrop();
+  const { setIsComposing, pendingVerdict } = useDrop();
+  const { stats: communityStats } = useCommunityStats(user?.communityId);
   const { playTap, vibrate } = useFeedback();
+
+  const savedState = user ? loadComposeState(user.uid) : null;
+
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
-  const [queued, setQueued] = useState(false);
+  const [queued, setQueued] = useState(savedState?.queued ?? false);
+  const [confessionId, setConfessionId] = useState(savedState?.confessionId ?? null);
+  const [dropId, setDropId] = useState(savedState?.dropId ?? null);
+  const [dropStatus, setDropStatus] = useState(savedState?.dropStatus ?? "waiting");
   const [isFrozen, setIsFrozen] = useState(false);
-  const [countdown, setCountdown] = useState(DROP_CYCLE_SEC);
-  const countdownRef = useRef(null);
+  const [remainingSec, setRemainingSec] = useState(DROP_DURATION_SEC);
+  const [scheduledAtMs, setScheduledAtMs] = useState(savedState?.scheduledAtMs ?? null);
+
+  // Persist queued state so reload restores the waiting/live UI
+  useEffect(() => {
+    if (!user) return;
+    if (queued && confessionId) {
+      saveComposeState(user.uid, {
+        queued: true,
+        confessionId,
+        dropId,
+        dropStatus,
+        scheduledAtMs,
+      });
+    } else {
+      saveComposeState(user.uid, null);
+    }
+  }, [user, queued, confessionId, dropId, dropStatus, scheduledAtMs]);
 
   // ── Listen to user doc for frozen status ─────────────────────────────────
   useEffect(() => {
@@ -31,22 +78,80 @@ export default function ComposeScreen() {
           setIsFrozen(snapshot.data().isFrozen === true);
         }
       },
-      () => {} // Ignore errors (doc may not exist yet)
+      () => {},
     );
 
     return () => unsub();
   }, [user]);
 
-  // Signal the global context whether the user is actively typing.
-  // "Queued" state does NOT count — we want users to be pulled into
-  // a live drop after they've submitted their confession.
+  // Signal the global context — block auto-nav while typing OR waiting for verdict
   useEffect(() => {
-    const composing = !queued && text.trim().length > 0;
+    const composing = queued || (!queued && text.trim().length > 0);
     setIsComposing(composing);
-
-    // Clear on unmount so navigating away doesn't leave it stuck
     return () => setIsComposing(false);
   }, [text, queued, setIsComposing]);
+
+  // When verdict arrives, clear queued state (DropAutoNav handles navigation)
+  useEffect(() => {
+    if (queued && pendingVerdict) {
+      setQueued(false);
+      setConfessionId(null);
+      setDropId(null);
+      setDropStatus("waiting");
+      setScheduledAtMs(null);
+      setRemainingSec(DROP_DURATION_SEC);
+    }
+  }, [queued, pendingVerdict]);
+
+  // Listen for confession status and server-synced scheduledAt timestamp
+  useEffect(() => {
+    if (!queued || !confessionId) return;
+
+    const unsub = onSnapshot(
+      doc(db, "pendingConfessions", confessionId),
+      (snapshot) => {
+        if (!snapshot.exists()) return;
+        const data = snapshot.data();
+
+        if (data.moderationStatus === "scheduled") {
+          setDropStatus("live");
+          if (data.scheduledAt?.toMillis) {
+            setScheduledAtMs(data.scheduledAt.toMillis());
+          }
+        }
+      },
+      (err) => console.error("Confession status listener error:", err),
+    );
+
+    return () => unsub();
+  }, [queued, confessionId]);
+
+  // Server-synced countdown while live (uses scheduledAt from Firestore)
+  useEffect(() => {
+    if (!queued || dropStatus !== "live") return;
+
+    const tick = () => {
+      if (scheduledAtMs) {
+        const elapsed = Date.now() - scheduledAtMs;
+        const remaining = Math.max(0, DROP_DURATION_MS - elapsed);
+        setRemainingSec(Math.ceil(remaining / 1000));
+        if (remaining <= 0) {
+          setDropStatus("tallying");
+        }
+      } else {
+        // Fallback before scheduledAt arrives from server
+        setRemainingSec((prev) => {
+          const next = Math.max(0, prev - 1);
+          if (next <= 0) setDropStatus("tallying");
+          return next;
+        });
+      }
+    };
+
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [queued, dropStatus, scheduledAtMs]);
 
   const charsLeft = MAX_CHARS - text.length;
   const isEmpty = text.trim().length === 0;
@@ -57,9 +162,9 @@ export default function ComposeScreen() {
 
     setSending(true);
     try {
-      // Touch presence document so server immediately sees author as active
       await setDoc(doc(db, "presence", user.uid), {
         lastSeen: serverTimestamp(),
+        communityId: user.communityId,
       });
 
       const token = await auth.currentUser.getIdToken();
@@ -71,7 +176,6 @@ export default function ComposeScreen() {
         },
         body: JSON.stringify({
           text: text.trim(),
-          communityId: user.communityId,
         }),
       });
       const result = await res.json();
@@ -81,12 +185,14 @@ export default function ComposeScreen() {
 
       setText("");
       setQueued(true);
-      setCountdown(DROP_CYCLE_SEC);
+      setConfessionId(result.confessionId || null);
+      setDropId(result.dropId || null);
+      setRemainingSec(DROP_DURATION_SEC);
+      setDropStatus(result.status === "live" ? "live" : "waiting");
       playTap();
       vibrate(30);
     } catch (err) {
       console.error("Failed to submit confession:", err);
-      // TODO: surface error to user in a later iteration
     } finally {
       setSending(false);
     }
@@ -94,28 +200,12 @@ export default function ComposeScreen() {
 
   function handleNewConfession() {
     setQueued(false);
-    setCountdown(DROP_CYCLE_SEC);
-    if (countdownRef.current) clearInterval(countdownRef.current);
+    setConfessionId(null);
+    setDropId(null);
+    setDropStatus("waiting");
+    setScheduledAtMs(null);
+    setRemainingSec(DROP_DURATION_SEC);
   }
-
-  // ── Countdown timer when queued ────────────────────────────────────────────
-  useEffect(() => {
-    if (!queued) return;
-
-    countdownRef.current = setInterval(() => {
-      setCountdown((prev) => {
-        if (prev <= 1) {
-          clearInterval(countdownRef.current);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-
-    return () => {
-      if (countdownRef.current) clearInterval(countdownRef.current);
-    };
-  }, [queued]);
 
   // ── Frozen account state ─────────────────────────────────────────────────
   if (isFrozen) {
@@ -137,50 +227,37 @@ export default function ComposeScreen() {
     );
   }
 
-  // ── Queued confirmation state ──────────────────────────────────────────────
+  // ── Queued / live / tallying state ───────────────────────────────────────
   if (queued) {
-    const radius = 46;
-    const circumference = 2 * Math.PI * radius;
-    const progress = countdown / DROP_CYCLE_SEC;
-    const strokeOffset = circumference * progress;
+    const statusTitle = {
+      waiting: "Finding audience…",
+      live: "You're LIVE!",
+      tallying: "Tallying reactions…",
+    }[dropStatus];
+
+    const statusSubtitle = {
+      waiting: "Looking for active users in your community to receive your confession.",
+      live: "Your confession is being broadcast right now. Reactions are rolling in!",
+      tallying: "The drop just ended — your verdict is on its way.",
+    }[dropStatus];
 
     return (
       <div className="screen" id="compose-screen">
         <div className="queued-container">
           <div className="countdown-ring-wrap">
-            <svg className="countdown-ring" viewBox="0 0 100 100">
-              <circle
-                className="countdown-ring-bg"
-                cx="50" cy="50" r={radius}
-              />
-              <circle
-                className="countdown-ring-fill"
-                cx="50" cy="50" r={radius}
-                strokeDasharray={circumference}
-                strokeDashoffset={circumference - strokeOffset}
-                transform="rotate(-90 50 50)"
-              />
-            </svg>
-            <div className="countdown-inner">
-              {countdown > 0 ? (
-                <>
-                  <span className="countdown-number">{countdown}</span>
-                  <span className="countdown-unit">sec</span>
-                </>
-              ) : (
-                <span className="countdown-done">📡</span>
-              )}
+            <div className={`live-pulse ${dropStatus === "live" ? "active" : ""}`} style={{ fontSize: "3rem" }}>
+              {dropStatus === "live" ? "🔴" : dropStatus === "tallying" ? "⚖️" : "📡"}
             </div>
           </div>
 
-          <h1 className="screen-title">
-            {countdown > 0 ? "Queued" : "Dropping now…"}
-          </h1>
-          <p className="screen-subtitle">
-            {countdown > 0
-              ? "Your confession is waiting for the next drop cycle."
-              : "Your confession is being broadcast to the crowd!"}
-          </p>
+          <h1 className="screen-title">{statusTitle}</h1>
+          <p className="screen-subtitle">{statusSubtitle}</p>
+
+          {dropStatus === "live" && (
+            <p className="screen-subtitle" style={{ opacity: 0.7 }}>
+              {remainingSec}s remaining
+            </p>
+          )}
 
           <button
             className="compose-btn secondary"
@@ -202,7 +279,14 @@ export default function ComposeScreen() {
       <div className="screen-icon">✍️</div>
       <h1 className="screen-title">Compose</h1>
       <p className="screen-subtitle">
-        Write your anonymous confession. It will only drop to users in <strong>{user?.communityId}</strong>.
+        Write your anonymous confession. It drops only to users in{" "}
+        <strong>{user?.communityId}</strong>
+        {communityStats && (
+          <>
+            {" "}({communityStats.activeCount} online · {communityStats.memberCount} total members)
+          </>
+        )}
+        .
       </p>
 
       <div className="compose-card glass-card">
@@ -212,7 +296,7 @@ export default function ComposeScreen() {
           placeholder="I have something to confess…"
           value={text}
           onChange={(e) => setText(e.target.value)}
-          maxLength={MAX_CHARS + 20} /* allow slight overshoot so counter goes red */
+          maxLength={MAX_CHARS + 20}
           rows={5}
           disabled={sending}
         />

@@ -7,7 +7,7 @@ const EMOJIS = ["😂", "💀", "😬", "❤️", "😳"];
 
 // Drop configuration
 const DROP_RECIPIENT_COUNT = 100;       // Fixed blast radius
-const DROP_DURATION_MS = 60_000;        // Confession is live for 60 seconds
+const DROP_DURATION_MS = 30_000;        // Confession is live for 30 seconds
 const ACTIVE_WINDOW_MS = 2 * 60_000;   // "Active" = heartbeat within last 2 minutes
 const MAX_CONFESSIONS_PER_TICK = 10;    // Process at most 10 confessions per scheduler tick
 
