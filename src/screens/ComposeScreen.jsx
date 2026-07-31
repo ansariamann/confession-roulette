@@ -165,6 +165,15 @@ export default function ComposeScreen() {
     if (isEmpty || isOverLimit || sending || !user) return;
 
     setSending(true);
+    
+    // OPTIMISTIC UI: Immediately clear text and transition to queued state
+    const previousText = text;
+    setText("");
+    setQueued(true);
+    setDropStatus("waiting");
+    playTap();
+    vibrate(30);
+
     try {
       await setDoc(doc(db, "presence", user.uid), {
         lastSeen: serverTimestamp(),
@@ -172,14 +181,16 @@ export default function ComposeScreen() {
       });
 
       const token = await auth.currentUser.getIdToken();
-      const res = await fetch(`${API_URL}/confess`, {
+      const res = await fetch("/api/confess", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          text: text.trim(),
+          text: previousText.trim(),
+          communityId: user.communityId,
+          uid: user.uid
         }),
       });
       const result = await res.json();
@@ -187,16 +198,16 @@ export default function ComposeScreen() {
         throw new Error(result.error || "Submission failed");
       }
 
-      setText("");
-      setQueued(true);
       setConfessionId(result.confessionId || null);
       setDropId(result.dropId || null);
       setRemainingSec(DROP_DURATION_SEC);
       setDropStatus(result.status === "live" ? "live" : "waiting");
-      playTap();
-      vibrate(30);
     } catch (err) {
       console.error("Failed to submit confession:", err);
+      // Revert optimistic UI update on failure
+      setText(previousText);
+      setQueued(false);
+      alert(err.message || "Failed to drop confession. Try again.");
     } finally {
       setSending(false);
     }

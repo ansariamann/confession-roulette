@@ -173,17 +173,19 @@ export default function LiveDropScreen() {
     };
   }, [currentDrop]);
 
-  // ── Listen to reaction counts for current active drop ──────────────────────
+  // ── Poll Upstash Redis for reactions for current active drop ──────────────────────
   useEffect(() => {
     if (!currentDrop) return;
 
-    const unsub = onSnapshot(
-      collection(db, "drops", currentDrop.id, "reactions"),
-      (snapshot) => {
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/react?dropId=${currentDrop.id}`);
+        if (!res.ok) return;
+        const data = await res.json();
         const counts = {};
-        snapshot.forEach((d) => {
-          counts[d.id] = d.data().count || 0;
-        });
+        for (const [k, v] of Object.entries(data.reactions || {})) {
+           counts[k] = parseInt(v, 10);
+        }
 
         // Detect remote reaction changes → fire rising emoji
         const prev = prevReactionsRef.current[currentDrop.id] || {};
@@ -213,10 +215,14 @@ export default function LiveDropScreen() {
           ...prev,
           [currentDrop.id]: counts,
         }));
-      },
-    );
+      } catch (err) {
+        console.error("Poll failed:", err);
+      }
+    };
 
-    return () => unsub();
+    poll();
+    const interval = setInterval(poll, 800);
+    return () => clearInterval(interval);
   }, [currentDrop]);
 
   // ── Check if user already voted on this drop (survives page reload) ────────
@@ -301,6 +307,18 @@ export default function LiveDropScreen() {
 
       const dropId = currentDrop.id;
       setVotedMap((prev) => ({ ...prev, [dropId]: true }));
+      
+      // OPTIMISTIC UI: Increment the local counter immediately
+      setReactionsMap((prev) => {
+        const currentCounts = prev[dropId] || {};
+        return {
+          ...prev,
+          [dropId]: {
+            ...currentCounts,
+            [emoji]: (currentCounts[emoji] || 0) + 1
+          }
+        };
+      });
 
       // Sound & haptic feedback
       playReaction();
@@ -324,25 +342,30 @@ export default function LiveDropScreen() {
       }, 1400);
 
       try {
-        // 1. Write voter doc (Firestore rules enforce uniqueness — second create fails)
-        const voterRef = doc(db, "drops", dropId, "voters", user.uid);
-        await setDoc(voterRef, { emoji, votedAt: serverTimestamp() });
-
-        // 2. Increment aggregate reaction counter
-        const reactionRef = doc(db, "drops", dropId, "reactions", emoji);
-        await updateDoc(reactionRef, { count: increment(1) });
-      } catch (err) {
-        // If the voter doc already existed, Firestore rules reject the create
-        // — the user already voted (e.g. from a reload). Keep votedMap = true.
-        if (
-          err?.code === "permission-denied" ||
-          err?.code === "already-exists"
-        ) {
-          console.warn("Already voted on this drop.");
-        } else {
-          console.error("Reaction failed:", err);
-          setVotedMap((prev) => ({ ...prev, [dropId]: false }));
+        // Fetch to Upstash Redis Next.js Edge route
+        const res = await fetch("/api/react", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dropId, emoji, uid: user.uid }),
+        });
+        
+        if (!res.ok) {
+           throw new Error("Reaction failed");
         }
+      } catch (err) {
+        console.error("Reaction failed:", err);
+        // Rollback optimistic update
+        setVotedMap((prev) => ({ ...prev, [dropId]: false }));
+        setReactionsMap((prev) => {
+          const currentCounts = prev[dropId] || {};
+          return {
+            ...prev,
+            [dropId]: {
+              ...currentCounts,
+              [emoji]: Math.max(0, (currentCounts[emoji] || 0) - 1)
+            }
+          };
+        });
       }
     },
     [currentDrop, canVote, user],
@@ -387,15 +410,15 @@ export default function LiveDropScreen() {
       setCommentedMap((prev) => ({ ...prev, [dropId]: true }));
       setCommentText("");
 
-      // Send via WebSocket
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(
-          JSON.stringify({
-            action: "send_comment",
-            dropId,
-            text: trimmed,
-          }),
-        );
+      // Write directly to Firestore
+      try {
+        await addDoc(collection(db, "drops", dropId, "comments"), {
+          text: trimmed,
+          createdAt: serverTimestamp(),
+        });
+      } catch (err) {
+        console.error("Failed to post comment:", err);
+        setCommentedMap((prev) => ({ ...prev, [dropId]: false }));
       }
     },
     [currentDrop, user, commentText, commentedMap],

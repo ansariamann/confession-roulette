@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useRouter } from "next/navigation";
 import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase";
 import { useAuth } from "../context/AuthProvider";
@@ -49,9 +49,9 @@ function getDominantEmoji(reactions) {
 
 export default function VerdictScreen() {
   const { dropId } = useParams();
+  const router = useRouter();
   const { user } = useAuth();
   const { authorVerdicts } = useDrop();
-  const navigate = useNavigate();
 
   const [urlVerdict, setUrlVerdict] = useState(null);
   const [loading, setLoading] = useState(
@@ -123,11 +123,11 @@ export default function VerdictScreen() {
     if (!currentVerdict) return;
 
     const timer = setTimeout(() => {
-      navigate("/", { replace: true });
+      router.replace("/");
     }, AUTO_RETURN_MS);
 
     return () => clearTimeout(timer);
-  }, [currentVerdict, navigate]);
+  }, [currentVerdict, router]);
 
   // ── Swipe handlers ────────────────────────────────────────────────────────
   const handlePrev = useCallback(() => {
