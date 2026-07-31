@@ -54,7 +54,9 @@ export default function VerdictScreen() {
   const navigate = useNavigate();
 
   const [urlVerdict, setUrlVerdict] = useState(null);
-  const [loading, setLoading] = useState(!!dropId && authorVerdicts.length === 0);
+  const [loading, setLoading] = useState(
+    !!dropId && authorVerdicts.length === 0,
+  );
   const [error, setError] = useState(null);
 
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -104,7 +106,8 @@ export default function VerdictScreen() {
   }, [dropId, user, authorVerdicts]);
 
   // Combine verdicts list (authorVerdicts prioritized, or urlVerdict)
-  const verdictsList = authorVerdicts.length > 0 ? authorVerdicts : (urlVerdict ? [urlVerdict] : []);
+  const verdictsList =
+    authorVerdicts.length > 0 ? authorVerdicts : urlVerdict ? [urlVerdict] : [];
 
   // Clamp current index
   useEffect(() => {
@@ -251,6 +254,36 @@ export default function VerdictScreen() {
           </div>
         )}
 
+        {/* Confession Text */}
+        {currentVerdict?.text && (
+          <div
+            className="verdict-confession glass-card"
+            style={{
+              marginBottom: "1.5rem",
+              padding: "1rem 1.25rem",
+              background: "rgba(255,255,255,0.08)",
+              borderRadius: "12px",
+              fontSize: "1rem",
+              lineHeight: "1.5",
+              color: "rgba(255,255,255,0.95)",
+              textAlign: "center",
+            }}
+          >
+            <div
+              style={{
+                fontSize: "0.75rem",
+                textTransform: "uppercase",
+                letterSpacing: "0.1em",
+                opacity: 0.6,
+                marginBottom: "0.5rem",
+              }}
+            >
+              Your Confession
+            </div>
+            "{currentVerdict.text}"
+          </div>
+        )}
+
         {/* Dominant emoji hero */}
         <div className="verdict-hero">
           <span className="verdict-dominant-emoji">
@@ -288,7 +321,6 @@ export default function VerdictScreen() {
                     style={{ width: `${width}%` }}
                   />
                 </div>
-                <span className="bar-count">{count}</span>
               </div>
             );
           })}
@@ -296,8 +328,32 @@ export default function VerdictScreen() {
 
         {/* Final Comments */}
         {currentVerdict?.comments && currentVerdict.comments.length > 0 && (
-          <div className="comment-section static-comments" style={{ marginTop: '1rem', width: '100%' }}>
-            <div className="comment-stream" style={{ maxHeight: '150px', padding: '0.5rem', background: 'rgba(255,255,255,0.05)', borderRadius: '12px' }}>
+          <div
+            className="comment-section static-comments"
+            style={{ marginTop: "1rem", width: "100%" }}
+          >
+            <div
+              style={{
+                fontSize: "0.75rem",
+                textTransform: "uppercase",
+                letterSpacing: "0.1em",
+                opacity: 0.6,
+                marginBottom: "0.5rem",
+                textAlign: "center",
+              }}
+            >
+              Comments ({currentVerdict.comments.length})
+            </div>
+            <div
+              className="comment-stream"
+              style={{
+                maxHeight: "150px",
+                padding: "0.5rem",
+                background: "rgba(255,255,255,0.05)",
+                borderRadius: "12px",
+                overflowY: "auto",
+              }}
+            >
               {currentVerdict.comments.map((c) => (
                 <div className="comment-bubble" key={c.id}>
                   <span className="comment-text">{c.text}</span>
@@ -308,9 +364,7 @@ export default function VerdictScreen() {
         )}
 
         {/* Auto-return indicator */}
-        <p className="verdict-return-hint">
-          Returning to compose shortly…
-        </p>
+        <p className="verdict-return-hint">Returning to compose shortly…</p>
       </div>
     </div>
   );

@@ -35,8 +35,8 @@ try {
 } catch (err) {
   console.error(
     "❌ Failed to initialize Firebase Admin.\n" +
-    "   Make sure serviceAccountKey.json exists in the server/ directory.\n" +
-    "   Download it from: Firebase Console → Project Settings → Service accounts → Generate new private key\n",
+      "   Make sure serviceAccountKey.json exists in the server/ directory.\n" +
+      "   Download it from: Firebase Console → Project Settings → Service accounts → Generate new private key\n",
     err.message,
   );
   process.exit(1);
@@ -60,13 +60,13 @@ const comprehendClient = new ComprehendClient({
 // Conservative by default — over-reject is the acceptable failure mode.
 // These can be loosened later based on false-positive data.
 const THRESHOLDS = {
-  HATE_SPEECH:          0.5,
-  HARASSMENT_OR_ABUSE:  0.5,
-  SEXUAL:               0.5,   // HIGH priority — covers CSAM direction
-  VIOLENCE_OR_THREAT:   0.5,   // CRITICAL priority — covers self-harm, threats
-  GRAPHIC:              0.5,
-  INSULT:               0.7,
-  PROFANITY:            0.7,
+  HATE_SPEECH: 0.5,
+  HARASSMENT_OR_ABUSE: 0.5,
+  SEXUAL: 0.5, // HIGH priority — covers CSAM direction
+  VIOLENCE_OR_THREAT: 0.5, // CRITICAL priority — covers self-harm, threats
+  GRAPHIC: 0.5,
+  INSULT: 0.7,
+  PROFANITY: 0.7,
 };
 
 // Overall toxicity threshold
@@ -74,7 +74,7 @@ const OVERALL_TOXICITY_THRESHOLD = 0.5;
 
 // Priority mapping for moderationLog
 const PRIORITY_MAP = {
-  SEXUAL:             "HIGH",
+  SEXUAL: "HIGH",
   VIOLENCE_OR_THREAT: "CRITICAL",
 };
 
@@ -84,7 +84,8 @@ const PII_PATTERNS = [
     name: "PII_PHONE",
     // US: (555) 123-4567, 555-123-4567, +1 555 123 4567
     // International: +91 98765 43210, +44 20 7946 0958
-    pattern: /(?:\+?\d{1,3}[-.\s]?)?\(?\d{2,5}\)?[-.\s]?\d{3,5}[-.\s]?\d{3,5}\b/,
+    pattern:
+      /(?:\+?\d{1,3}[-.\s]?)?\(?\d{2,5}\)?[-.\s]?\d{3,5}[-.\s]?\d{3,5}\b/,
     description: "Phone number pattern detected",
   },
   {
@@ -95,12 +96,14 @@ const PII_PATTERNS = [
   {
     name: "PII_ADDRESS",
     // Street addresses: "123 Main St", "456 Oak Avenue"
-    pattern: /\b\d{1,5}\s+[A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*\s+(?:St(?:reet)?|Ave(?:nue)?|Blvd|Boulevard|Dr(?:ive)?|Ln|Lane|Rd|Road|Way|Ct|Court|Pl(?:ace)?|Cir(?:cle)?|Terr(?:ace)?|Pike|Hwy|Highway)\b/i,
+    pattern:
+      /\b\d{1,5}\s+[A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*\s+(?:St(?:reet)?|Ave(?:nue)?|Blvd|Boulevard|Dr(?:ive)?|Ln|Lane|Rd|Road|Way|Ct|Court|Pl(?:ace)?|Cir(?:cle)?|Terr(?:ace)?|Pike|Hwy|Highway)\b/i,
     description: "Street address pattern detected",
   },
   {
     name: "PII_ADDRESS_UNIT",
-    pattern: /\b(?:Apt|Apartment|Suite|Ste|Unit|Bldg|Building|Fl(?:oor)?|Rm|Room)\s*[#.]?\s*\d+\b/i,
+    pattern:
+      /\b(?:Apt|Apartment|Suite|Ste|Unit|Bldg|Building|Fl(?:oor)?|Rm|Room)\s*[#.]?\s*\d+\b/i,
     description: "Address unit pattern detected",
   },
   {
@@ -138,10 +141,27 @@ function checkPII(text) {
  * Local fallback safety check (used if AWS Comprehend API is unreachable/unsubscribed).
  */
 const LOCAL_SAFETY_PATTERNS = [
-  { reason: "SELF_HARM", pattern: /\b(?:suicide|kill\s+myself|end\s+my\s+life|self-harm|want\s+to\s+die)\b/i, priority: "CRITICAL" },
-  { reason: "VIOLENCE_OR_THREAT", pattern: /\b(?:bomb|shoot\s+up|kill\s+everyone|massacre|terrorist)\b/i, priority: "CRITICAL" },
-  { reason: "HATE_SPEECH", pattern: /\b(?:nigger|faggot|retard|chink|kike|spic)\b/i, priority: "HIGH" },
-  { reason: "SEXUAL", pattern: /\b(?:child\s+porn|cp\b|explicit\s+nude)\b/i, priority: "HIGH" },
+  {
+    reason: "SELF_HARM",
+    pattern:
+      /\b(?:suicide|kill\s+myself|end\s+my\s+life|self-harm|want\s+to\s+die)\b/i,
+    priority: "CRITICAL",
+  },
+  {
+    reason: "VIOLENCE_OR_THREAT",
+    pattern: /\b(?:bomb|shoot\s+up|kill\s+everyone|massacre|terrorist)\b/i,
+    priority: "CRITICAL",
+  },
+  {
+    reason: "HATE_SPEECH",
+    pattern: /\b(?:nigger|faggot|retard|chink|kike|spic)\b/i,
+    priority: "HIGH",
+  },
+  {
+    reason: "SEXUAL",
+    pattern: /\b(?:child\s+porn|cp\b|explicit\s+nude)\b/i,
+    priority: "HIGH",
+  },
 ];
 
 function checkLocalSafety(text) {
@@ -212,7 +232,9 @@ async function checkContentSafety(text) {
 
     return { passed: true, scores, priority: "NORMAL" };
   } catch (err) {
-    console.warn(`  ⚠️  AWS Comprehend API notice (${err.message}) — using local safety fallback.`);
+    console.warn(
+      `  ⚠️  AWS Comprehend API notice (${err.message}) — using local safety fallback.`,
+    );
     return checkLocalSafety(text);
   }
 }
@@ -221,7 +243,14 @@ async function checkContentSafety(text) {
  * Write a rejection entry to the moderationLog collection.
  * Stores hashed + truncated text — never full plaintext.
  */
-async function logRejection(confessionId, text, reason, description, scores, priority) {
+async function logRejection(
+  confessionId,
+  text,
+  reason,
+  description,
+  scores,
+  priority,
+) {
   await db.collection("moderationLog").add({
     confessionId,
     reason,
@@ -261,17 +290,27 @@ async function moderateConfession(docSnapshot) {
     if (piiResult) {
       console.log(`  ❌ ${docId}: PII detected — ${piiResult.reason}`);
       await docRef.update({ moderationStatus: "rejected" });
-      await logRejection(docId, text, piiResult.reason, piiResult.description, {}, "NORMAL");
+      await logRejection(
+        docId,
+        text,
+        piiResult.reason,
+        piiResult.description,
+        {},
+        "NORMAL",
+      );
       return;
     }
 
     // ── Step 2: AWS Comprehend toxicity check ─────────────────────────────
     const safetyResult = await checkContentSafety(text);
     if (!safetyResult.passed) {
-      console.log(`  ❌ ${docId}: ${safetyResult.reason} — ${safetyResult.description}`);
+      console.log(
+        `  ❌ ${docId}: ${safetyResult.reason} — ${safetyResult.description}`,
+      );
       await docRef.update({ moderationStatus: "rejected" });
       await logRejection(
-        docId, text,
+        docId,
+        text,
         safetyResult.reason,
         safetyResult.description,
         safetyResult.scores,
@@ -353,7 +392,10 @@ async function processReport(reportDoc) {
 
       // Look up the author from the pendingConfession if available
       if (confessionId) {
-        const confessionDoc = await db.collection("pendingConfessions").doc(confessionId).get();
+        const confessionDoc = await db
+          .collection("pendingConfessions")
+          .doc(confessionId)
+          .get();
         if (confessionDoc.exists) {
           authorUid = confessionDoc.data().authorUid;
         }
@@ -388,13 +430,13 @@ async function processReport(reportDoc) {
       if (reportCount >= FREEZE_THRESHOLD) {
         await userRef.update({ isFrozen: true });
         console.log(
-          `  🧊 User ${authorUid} frozen (reportCount: ${reportCount} >= ${FREEZE_THRESHOLD})`
+          `  🧊 User ${authorUid} frozen (reportCount: ${reportCount} >= ${FREEZE_THRESHOLD})`,
         );
       }
 
       console.log(
         `  🚩 Report processed: drop ${dropId}, author ${authorUid} ` +
-        `(reportCount: ${reportCount})`
+          `(reportCount: ${reportCount})`,
       );
     } else {
       console.log(`  🚩 Report processed: drop ${dropId} (author unknown)`);
@@ -405,7 +447,11 @@ async function processReport(reportDoc) {
   } catch (err) {
     console.error(`  ❌ Failed to process report ${reportId}:`, err.message);
     // Still try to clean up the report doc
-    try { await reportDoc.ref.delete(); } catch { /* ignore cleanup error */ }
+    try {
+      await reportDoc.ref.delete();
+    } catch {
+      /* ignore cleanup error */
+    }
   }
 }
 
@@ -427,14 +473,14 @@ function startReportListener() {
   );
 }
 
-const DROP_INTERVAL_MS = 60_000;       // Run every 60 seconds
-const ACTIVE_WINDOW_MS = 2 * 60_000;   // "Active" = heartbeat within last 2 minutes
-const DROP_RECIPIENT_COUNT = 100;      // Fixed blast radius
-const MAX_CONFESSIONS_PER_TICK = 10;   // Process at most 10 confessions per cycle
-const DROP_DURATION_MS = 60_000;       // Confession is live for 60 seconds total to gather reactions
+const DROP_INTERVAL_MS = 60_000; // Run every 60 seconds
+const ACTIVE_WINDOW_MS = 2 * 60_000; // "Active" = heartbeat within last 2 minutes
+const DROP_RECIPIENT_COUNT = 100; // Fixed blast radius
+const MAX_CONFESSIONS_PER_TICK = 10; // Process at most 10 confessions per cycle
+const DROP_DURATION_MS = 60_000; // Confession is live for 60 seconds total to gather reactions
 
 // Reaction emojis — must match client-side EMOJIS array
-const EMOJIS = ['😂', '💀', '😬', '❤️', '😳'];
+const EMOJIS = ["😂", "💀", "😬", "❤️", "😳"];
 
 /**
  * Fisher-Yates shuffle — O(n), uniform distribution.
@@ -465,7 +511,7 @@ async function getActiveUsersByCommunity() {
     const data = doc.data();
     const uid = doc.id;
     const communityId = data.communityId || "global";
-    
+
     if (!communityMap[communityId]) {
       communityMap[communityId] = [];
     }
@@ -532,17 +578,41 @@ async function processExpiredDrop(dropDoc) {
       reactionTotals[doc.id] = doc.data().count || 0;
     });
 
-    // 2. Write verdict (reaction totals only — never the confession text)
-    await db.collection("verdicts").doc(dropId).set({
-      dropId,
-      confessionId,
-      authorUid: dropData.authorUid || null,
-      recipientUids: dropData.recipientUids || [],
-      recipientCount: dropData.recipientCount || 0,
-      reactions: reactionTotals,
-      totalReactions: Object.values(reactionTotals).reduce((a, b) => a + b, 0),
-      expiredAt: FieldValue.serverTimestamp(),
+    // Capture comments with proper sorting
+    const commentsSnapshot = await dropRef
+      .collection("comments")
+      .orderBy("createdAt", "asc")
+      .get();
+    const finalComments = [];
+    commentsSnapshot.forEach((doc) => {
+      const commentData = doc.data();
+      finalComments.push({
+        id: doc.id,
+        text: commentData.text,
+        createdAt: commentData.createdAt,
+        uid: commentData.uid,
+      });
     });
+
+    // 2. Write verdict (reaction totals, comments, AND confession text for the author)
+    await db
+      .collection("verdicts")
+      .doc(dropId)
+      .set({
+        dropId,
+        confessionId,
+        authorUid: dropData.authorUid || null,
+        recipientUids: dropData.recipientUids || [],
+        recipientCount: dropData.recipientCount || 0,
+        text: dropData.text || "", // Store confession text so author can see it
+        reactions: reactionTotals,
+        comments: finalComments,
+        totalReactions: Object.values(reactionTotals).reduce(
+          (a, b) => a + b,
+          0,
+        ),
+        expiredAt: FieldValue.serverTimestamp(),
+      });
 
     // 3. Hard-delete: reactions subcollection
     await deleteSubcollection(dropRef, "reactions");
@@ -552,7 +622,7 @@ async function processExpiredDrop(dropDoc) {
 
     // 3c. Hard-delete: comments subcollection (ephemeral anonymous comments)
     await deleteSubcollection(dropRef, "comments");
-    
+
     // 3d. Clear in-memory comment cache for this drop
     if (global.commentsCache && global.commentsCache[dropId]) {
       delete global.commentsCache[dropId];
@@ -568,7 +638,7 @@ async function processExpiredDrop(dropDoc) {
 
     console.log(
       `  🗑️  Drop ${dropId} fully expired → verdict written, ` +
-      `drop + reactions + confession ${confessionId} hard-deleted`
+        `drop + reactions + confession ${confessionId} hard-deleted`,
     );
   } catch (err) {
     console.error(`  ❌ Failed to expire drop ${dropId}:`, err.message);
@@ -602,7 +672,9 @@ async function expirySweepTick() {
 }
 
 function startExpirySweeper() {
-  console.log(`🧹 Expiry sweeper started (every ${EXPIRY_SWEEP_INTERVAL_MS / 1000}s)\n`);
+  console.log(
+    `🧹 Expiry sweeper started (every ${EXPIRY_SWEEP_INTERVAL_MS / 1000}s)\n`,
+  );
   setInterval(expirySweepTick, EXPIRY_SWEEP_INTERVAL_MS);
 }
 
@@ -628,14 +700,19 @@ async function dropSchedulerTick() {
 
     // 2. Get active user pool grouped by community
     const communityMap = await getActiveUsersByCommunity();
-    const totalActive = Object.values(communityMap).reduce((acc, arr) => acc + arr.length, 0);
+    const totalActive = Object.values(communityMap).reduce(
+      (acc, arr) => acc + arr.length,
+      0,
+    );
 
     if (totalActive === 0) {
       console.log("  ⏳ No active users — skipping drop cycle");
       return;
     }
 
-    console.log(`\n🎯 Drop tick: ${passedSnapshot.size} confession(s), ${totalActive} active user(s)`);
+    console.log(
+      `\n🎯 Drop tick: ${passedSnapshot.size} confession(s), ${totalActive} active user(s)`,
+    );
 
     // 3. Create a drop for each passed confession
     for (const confessionDoc of passedSnapshot.docs) {
@@ -646,14 +723,20 @@ async function dropSchedulerTick() {
       const confessionId = confessionDoc.id;
       const authorUid = confessionData.authorUid;
       const targetCommunity = confessionData.communityId || "global";
-      
+
       const activeUids = communityMap[targetCommunity] || [];
 
       // Select random recipients
-      const recipients = selectRecipients(activeUids, authorUid, DROP_RECIPIENT_COUNT);
+      const recipients = selectRecipients(
+        activeUids,
+        authorUid,
+        DROP_RECIPIENT_COUNT,
+      );
 
       if (recipients.length === 0) {
-        console.log(`  ⏳ ${confessionId}: no eligible recipients in community '${targetCommunity}'`);
+        console.log(
+          `  ⏳ ${confessionId}: no eligible recipients in community '${targetCommunity}'`,
+        );
         continue;
       }
 
@@ -678,7 +761,7 @@ async function dropSchedulerTick() {
 
       console.log(
         `  📡 Drop created: ${dropRef.id} → ${recipients.length} recipients ` +
-        `(confession: ${confessionId})`
+          `(confession: ${confessionId})`,
       );
 
       // Expiry is handled by the sweeper — no setTimeout needed
@@ -691,7 +774,9 @@ async function dropSchedulerTick() {
 }
 
 function startDropScheduler() {
-  console.log(`⏱️  Drop scheduler started (every ${DROP_INTERVAL_MS / 1000}s)\n`);
+  console.log(
+    `⏱️  Drop scheduler started (every ${DROP_INTERVAL_MS / 1000}s)\n`,
+  );
 
   // Run once immediately, then on interval
   dropSchedulerTick();
@@ -750,7 +835,7 @@ async function rollupHallOfFame() {
       totalConfessions++;
       for (const [emoji, count] of Object.entries(reactions)) {
         emojiTotals[emoji] = (emojiTotals[emoji] || 0) + (count || 0);
-        totalReactions += (count || 0);
+        totalReactions += count || 0;
       }
     });
 
@@ -758,10 +843,11 @@ async function rollupHallOfFame() {
     if (existing) {
       const prevTotals = existing.emojiTotals || {};
       for (const emoji of EMOJIS) {
-        emojiTotals[emoji] = (emojiTotals[emoji] || 0) + (prevTotals[emoji] || 0);
+        emojiTotals[emoji] =
+          (emojiTotals[emoji] || 0) + (prevTotals[emoji] || 0);
       }
-      totalConfessions += (existing.totalConfessions || 0);
-      totalReactions += (existing.totalReactions || 0);
+      totalConfessions += existing.totalConfessions || 0;
+      totalReactions += existing.totalReactions || 0;
     }
 
     // Write the rollup
@@ -780,8 +866,8 @@ async function rollupHallOfFame() {
 
     console.log(
       `  🏆 Hall of Fame rollup: ${today} — ` +
-      `${verdictsSnapshot.size} verdict(s) (>=5m old) consumed, ` +
-      `${totalReactions} total reactions`
+        `${verdictsSnapshot.size} verdict(s) (>=5m old) consumed, ` +
+        `${totalReactions} total reactions`,
     );
   } catch (err) {
     console.error("  ❌ Hall of Fame rollup error:", err.message);
@@ -789,7 +875,9 @@ async function rollupHallOfFame() {
 }
 
 function startHallOfFameRollup() {
-  console.log(`🏆 Hall of Fame rollup started (checks every ${ROLLUP_CHECK_INTERVAL_MS / 1000}s)\n`);
+  console.log(
+    `🏆 Hall of Fame rollup started (checks every ${ROLLUP_CHECK_INTERVAL_MS / 1000}s)\n`,
+  );
   setInterval(rollupHallOfFame, ROLLUP_CHECK_INTERVAL_MS);
 }
 
@@ -819,7 +907,7 @@ io.on("connection", (socket) => {
   // Client joins a specific drop's room
   socket.on("join_drop", (dropId) => {
     socket.join(dropId);
-    
+
     // Send existing comments to the newly joined client
     const existingComments = global.commentsCache[dropId] || [];
     socket.emit("initial_comments", existingComments);
@@ -851,4 +939,3 @@ const SOCKET_PORT = process.env.SOCKET_PORT || 3001;
 httpServer.listen(SOCKET_PORT, () => {
   console.log(`🔌 Socket.IO server running on port ${SOCKET_PORT}`);
 });
-

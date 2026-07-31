@@ -1,5 +1,12 @@
 import { useState, useEffect, useRef } from "react";
-import { collection, query, where, orderBy, limit, getDocs } from "firebase/firestore";
+import {
+  collection,
+  query,
+  where,
+  orderBy,
+  limit,
+  getDocs,
+} from "firebase/firestore";
 import { auth, db, API_URL } from "../firebase";
 
 /**
@@ -8,7 +15,11 @@ import { auth, db, API_URL } from "../firebase";
  * Member counts are maintained server-side when users join via POST /community/join.
  * Active (online) counts are fetched from GET /community/stats.
  */
-export default function CommunityPicker({ onSelect, showSkip = false, initialValue = "" }) {
+export default function CommunityPicker({
+  onSelect,
+  showSkip = false,
+  initialValue = "",
+}) {
   const [input, setInput] = useState(initialValue);
   const [suggestions, setSuggestions] = useState([]);
   const [showDropdown, setShowDropdown] = useState(false);
@@ -41,7 +52,11 @@ export default function CommunityPicker({ onSelect, showSkip = false, initialVal
             });
             if (!res.ok) return c;
             const stats = await res.json();
-            return { ...c, memberCount: stats.memberCount, activeCount: stats.activeCount };
+            return {
+              ...c,
+              memberCount: stats.memberCount,
+              activeCount: stats.activeCount,
+            };
           } catch {
             return c;
           }
@@ -67,7 +82,9 @@ export default function CommunityPicker({ onSelect, showSkip = false, initialVal
       setLoading(true);
       try {
         const lower = trimmed.toLowerCase();
-        const end = lower.slice(0, -1) + String.fromCharCode(lower.charCodeAt(lower.length - 1) + 1);
+        const end =
+          lower.slice(0, -1) +
+          String.fromCharCode(lower.charCodeAt(lower.length - 1) + 1);
 
         const q = query(
           collection(db, "communities"),
@@ -120,17 +137,14 @@ export default function CommunityPicker({ onSelect, showSkip = false, initialVal
     handleSelect("Global");
   };
 
-  const exactMatch = suggestions.some((s) => s.nameLower === input.trim().toLowerCase());
+  const exactMatch = suggestions.some(
+    (s) => s.nameLower === input.trim().toLowerCase(),
+  );
   const trimmed = input.trim();
 
   function formatMeta(s) {
     const members = s.memberCount ?? 0;
-    const online = s.activeCount;
-    const memberLabel = `${members} ${members === 1 ? "member" : "members"}`;
-    if (typeof online === "number") {
-      return `${memberLabel} · ${online} online`;
-    }
-    return memberLabel;
+    return `${members} ${members === 1 ? "member" : "members"}`;
   }
 
   return (
@@ -140,7 +154,9 @@ export default function CommunityPicker({ onSelect, showSkip = false, initialVal
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          onFocus={() => { if (suggestions.length > 0) setShowDropdown(true); }}
+          onFocus={() => {
+            if (suggestions.length > 0) setShowDropdown(true);
+          }}
           placeholder="Search or create a community…"
           className="community-input"
           autoComplete="off"
@@ -178,17 +194,25 @@ export default function CommunityPicker({ onSelect, showSkip = false, initialVal
         <button
           className="community-create-btn"
           onClick={() => {
-            const match = suggestions.find((s) => s.nameLower === trimmed.toLowerCase());
+            const match = suggestions.find(
+              (s) => s.nameLower === trimmed.toLowerCase(),
+            );
             if (match) handleSelect(match.name);
           }}
           disabled={joining}
         >
-          {joining ? "Joining…" : `Join "${suggestions.find((s) => s.nameLower === trimmed.toLowerCase())?.name}"`}
+          {joining
+            ? "Joining…"
+            : `Join "${suggestions.find((s) => s.nameLower === trimmed.toLowerCase())?.name}"`}
         </button>
       )}
 
       {showSkip && (
-        <button className="community-skip-btn" onClick={handleSkip} disabled={joining}>
+        <button
+          className="community-skip-btn"
+          onClick={handleSkip}
+          disabled={joining}
+        >
           Skip → Join Global Community
         </button>
       )}

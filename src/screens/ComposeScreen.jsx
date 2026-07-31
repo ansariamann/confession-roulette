@@ -5,7 +5,6 @@ import { useAuth } from "../context/AuthProvider";
 import { useDrop } from "../context/DropContext";
 import ConnectionTest from "../components/ConnectionTest";
 import useFeedback from "../hooks/useFeedback";
-import { useCommunityStats } from "../hooks/useCommunityStats";
 import { DROP_DURATION_MS, DROP_DURATION_SEC } from "../constants";
 
 const MAX_CHARS = 280;
@@ -36,7 +35,6 @@ function saveComposeState(uid, state) {
 export default function ComposeScreen() {
   const { user } = useAuth();
   const { setIsComposing, pendingVerdict } = useDrop();
-  const { stats: communityStats } = useCommunityStats(user?.communityId);
   const { playTap, vibrate } = useFeedback();
 
   const savedState = user ? loadComposeState(user.uid) : null;
@@ -44,12 +42,18 @@ export default function ComposeScreen() {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [queued, setQueued] = useState(savedState?.queued ?? false);
-  const [confessionId, setConfessionId] = useState(savedState?.confessionId ?? null);
+  const [confessionId, setConfessionId] = useState(
+    savedState?.confessionId ?? null,
+  );
   const [dropId, setDropId] = useState(savedState?.dropId ?? null);
-  const [dropStatus, setDropStatus] = useState(savedState?.dropStatus ?? "waiting");
+  const [dropStatus, setDropStatus] = useState(
+    savedState?.dropStatus ?? "waiting",
+  );
   const [isFrozen, setIsFrozen] = useState(false);
   const [remainingSec, setRemainingSec] = useState(DROP_DURATION_SEC);
-  const [scheduledAtMs, setScheduledAtMs] = useState(savedState?.scheduledAtMs ?? null);
+  const [scheduledAtMs, setScheduledAtMs] = useState(
+    savedState?.scheduledAtMs ?? null,
+  );
 
   // Persist queued state so reload restores the waiting/live UI
   useEffect(() => {
@@ -172,7 +176,7 @@ export default function ComposeScreen() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           text: text.trim(),
@@ -219,8 +223,8 @@ export default function ComposeScreen() {
             account is under review.
           </p>
           <p className="frozen-hint">
-            If you believe this is an error, please wait for a moderator
-            to review your account.
+            If you believe this is an error, please wait for a moderator to
+            review your account.
           </p>
         </div>
       </div>
@@ -236,7 +240,8 @@ export default function ComposeScreen() {
     }[dropStatus];
 
     const statusSubtitle = {
-      waiting: "Looking for active users in your community to receive your confession.",
+      waiting:
+        "Looking for active users in your community to receive your confession.",
       live: "Your confession is being broadcast right now. Reactions are rolling in!",
       tallying: "The drop just ended — your verdict is on its way.",
     }[dropStatus];
@@ -245,8 +250,15 @@ export default function ComposeScreen() {
       <div className="screen" id="compose-screen">
         <div className="queued-container">
           <div className="countdown-ring-wrap">
-            <div className={`live-pulse ${dropStatus === "live" ? "active" : ""}`} style={{ fontSize: "3rem" }}>
-              {dropStatus === "live" ? "🔴" : dropStatus === "tallying" ? "⚖️" : "📡"}
+            <div
+              className={`live-pulse ${dropStatus === "live" ? "active" : ""}`}
+              style={{ fontSize: "3rem" }}
+            >
+              {dropStatus === "live"
+                ? "🔴"
+                : dropStatus === "tallying"
+                  ? "⚖️"
+                  : "📡"}
             </div>
           </div>
 
@@ -280,13 +292,7 @@ export default function ComposeScreen() {
       <h1 className="screen-title">Compose</h1>
       <p className="screen-subtitle">
         Write your anonymous confession. It drops only to users in{" "}
-        <strong>{user?.communityId}</strong>
-        {communityStats && (
-          <>
-            {" "}({communityStats.activeCount} online · {communityStats.memberCount} total members)
-          </>
-        )}
-        .
+        <strong>{user?.communityId}</strong>.
       </p>
 
       <div className="compose-card glass-card">
@@ -304,11 +310,7 @@ export default function ComposeScreen() {
         <div className="compose-footer">
           <span
             className={`char-counter ${
-              charsLeft <= 20
-                ? charsLeft <= 0
-                  ? "over"
-                  : "warn"
-                : ""
+              charsLeft <= 20 ? (charsLeft <= 0 ? "over" : "warn") : ""
             }`}
           >
             {charsLeft}
@@ -320,18 +322,12 @@ export default function ComposeScreen() {
             onClick={handleSend}
             disabled={isEmpty || isOverLimit || sending}
           >
-            {sending ? (
-              <span className="btn-spinner" />
-            ) : (
-              "Drop It 🎤"
-            )}
+            {sending ? <span className="btn-spinner" /> : "Drop It 🎤"}
           </button>
         </div>
       </div>
 
-      {user && (
-        <div className="uid-tag">uid: {user.uid.slice(0, 12)}…</div>
-      )}
+      {user && <div className="uid-tag">uid: {user.uid.slice(0, 12)}…</div>}
 
       <ConnectionTest />
     </div>

@@ -64,7 +64,9 @@ function generateHeadline(dominant, totalConfessions, totalReactions) {
     ],
   };
 
-  const options = intros[dominant] || [`${totalConfessions} confessions. Dominant vibe: ${label}.`];
+  const options = intros[dominant] || [
+    `${totalConfessions} confessions. Dominant vibe: ${label}.`,
+  ];
   // Deterministic pick based on totalConfessions so it doesn't flicker
   return options[totalConfessions % options.length];
 }
@@ -76,7 +78,9 @@ function formatDate(dateStr) {
   const today = new Date().toISOString().slice(0, 10);
   if (dateStr === today) return "Today";
 
-  const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+  const yesterday = new Date(Date.now() - 86_400_000)
+    .toISOString()
+    .slice(0, 10);
   if (dateStr === yesterday) return "Yesterday";
 
   const date = new Date(dateStr + "T00:00:00Z");
@@ -91,10 +95,15 @@ function formatDate(dateStr) {
 function formatDateShort(dateStr) {
   const today = new Date().toISOString().slice(0, 10);
   if (dateStr === today) return "Today";
-  const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+  const yesterday = new Date(Date.now() - 86_400_000)
+    .toISOString()
+    .slice(0, 10);
   if (dateStr === yesterday) return "Yest.";
   const date = new Date(dateStr + "T00:00:00Z");
-  return date.toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" });
+  return date.toLocaleDateString("en-US", {
+    weekday: "short",
+    timeZone: "UTC",
+  });
 }
 
 /**
@@ -117,7 +126,6 @@ export default function HallOfFameScreen() {
   const { user } = useAuth();
   const [todayStats, setTodayStats] = useState(null);
   const [weekStats, setWeekStats] = useState([]);
-  const [activeCount, setActiveCount] = useState(0);
   const [loading, setLoading] = useState(true);
 
   // ── Listen to latest day stats (real-time) ──────────────────────────────
@@ -171,30 +179,15 @@ export default function HallOfFameScreen() {
     return () => unsub();
   }, [user]);
 
-  // ── Count active users (presence docs updated in last 2 min) ────────────
-  useEffect(() => {
-    if (!user) return;
-
-    const twoMinutesAgo = new Date(Date.now() - 2 * 60_000);
-    const q = query(
-      collection(db, "presence"),
-      where("lastSeen", ">=", twoMinutesAgo),
-    );
-
-    const unsub = onSnapshot(q, (snapshot) => {
-      setActiveCount(snapshot.size);
-    });
-
-    return () => unsub();
-  }, [user]);
-
   // ── Derived ─────────────────────────────────────────────────────────────
   const emojiTotals = todayStats?.emojiTotals || {};
   const totalReactions = todayStats?.totalReactions || 0;
   const totalConfessions = todayStats?.totalConfessions || 0;
   const maxCount = Math.max(1, ...Object.values(emojiTotals));
   const dominantEmoji = getDominant(emojiTotals);
-  const vibeColor = dominantEmoji ? VIBE_COLORS[dominantEmoji] : "var(--ink-soft)";
+  const vibeColor = dominantEmoji
+    ? VIBE_COLORS[dominantEmoji]
+    : "var(--ink-soft)";
 
   const headline = useMemo(
     () => generateHeadline(dominantEmoji, totalConfessions, totalReactions),
@@ -226,13 +219,9 @@ export default function HallOfFameScreen() {
           <div className="pulse-empty-icon">📡</div>
           <h1 className="pulse-title">The Pulse</h1>
           <p className="pulse-subtitle">
-            No signal yet. Confessions need to drop before
-            the community's pulse can be read.
+            No signal yet. Confessions need to drop before the community's pulse
+            can be read.
           </p>
-          <div className="pulse-active-badge">
-            <span className="pulse-active-dot" />
-            <span>{activeCount} online now</span>
-          </div>
         </div>
       </div>
     );
@@ -242,15 +231,10 @@ export default function HallOfFameScreen() {
   return (
     <div className="screen" id="halloffame-screen">
       <div className="pulse-content">
-
         {/* Header */}
         <div className="pulse-header">
           <div className="pulse-header-top">
             <h1 className="pulse-title">The Pulse</h1>
-            <div className="pulse-active-badge">
-              <span className="pulse-active-dot" />
-              <span>{activeCount}</span>
-            </div>
           </div>
           <span className="pulse-date">{formatDate(todayStats.date)}</span>
         </div>
@@ -261,7 +245,9 @@ export default function HallOfFameScreen() {
           <span className="pulse-hero-emoji">{dominantEmoji}</span>
           <div className="pulse-hero-info">
             <span className="pulse-hero-eyebrow">COMMUNITY VIBE</span>
-            <span className="pulse-hero-label">{EMOJI_LABELS[dominantEmoji]}</span>
+            <span className="pulse-hero-label">
+              {EMOJI_LABELS[dominantEmoji]}
+            </span>
           </div>
         </div>
 
@@ -329,9 +315,10 @@ export default function HallOfFameScreen() {
             <div className="pulse-timeline-row">
               {weekStats.map((day) => {
                 const dom = getDominant(day.emojiTotals || {});
-                const height = weekMax > 0
-                  ? Math.max(8, ((day.totalReactions || 0) / weekMax) * 56)
-                  : 8;
+                const height =
+                  weekMax > 0
+                    ? Math.max(8, ((day.totalReactions || 0) / weekMax) * 56)
+                    : 8;
                 const color = dom ? VIBE_COLORS[dom] : "var(--hairline-strong)";
                 const isToday = day.date === todayStats.date;
                 return (

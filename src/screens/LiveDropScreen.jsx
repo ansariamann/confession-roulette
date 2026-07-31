@@ -18,7 +18,6 @@ import { useDrop } from "../context/DropContext";
 import useFeedback from "../hooks/useFeedback";
 import { DROP_DURATION_MS } from "../constants";
 
-
 const EMOJIS = ["😂", "💀", "😬", "❤️", "😳"];
 const EMOJI_LABELS = {
   "😂": "Dying",
@@ -275,7 +274,10 @@ export default function LiveDropScreen() {
 
     return () => {
       unsub();
-      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+      if (
+        ws.readyState === WebSocket.OPEN ||
+        ws.readyState === WebSocket.CONNECTING
+      ) {
         ws.close();
       }
     };
@@ -332,7 +334,10 @@ export default function LiveDropScreen() {
       } catch (err) {
         // If the voter doc already existed, Firestore rules reject the create
         // — the user already voted (e.g. from a reload). Keep votedMap = true.
-        if (err?.code === "permission-denied" || err?.code === "already-exists") {
+        if (
+          err?.code === "permission-denied" ||
+          err?.code === "already-exists"
+        ) {
           console.warn("Already voted on this drop.");
         } else {
           console.error("Reaction failed:", err);
@@ -346,32 +351,29 @@ export default function LiveDropScreen() {
   // ── Handle report for current drop ────────────────────────────────────────
   const isReported = currentDrop ? !!reportedMap[currentDrop.id] : false;
 
-  const handleReport = useCallback(
-    async () => {
-      if (!currentDrop || !user || isReported) return;
-      const dropId = currentDrop.id;
-      setReportedMap((prev) => ({ ...prev, [dropId]: true }));
+  const handleReport = useCallback(async () => {
+    if (!currentDrop || !user || isReported) return;
+    const dropId = currentDrop.id;
+    setReportedMap((prev) => ({ ...prev, [dropId]: true }));
 
-      try {
-        const token = await auth.currentUser.getIdToken();
-        const res = await fetch(`${API_URL}/report`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${token}`,
-          },
-          body: JSON.stringify({ dropId }),
-        });
-        if (!res.ok) {
-          throw new Error("Failed to report");
-        }
-      } catch (err) {
-        console.error("Report failed:", err);
-        setReportedMap((prev) => ({ ...prev, [dropId]: false }));
+    try {
+      const token = await auth.currentUser.getIdToken();
+      const res = await fetch(`${API_URL}/report`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ dropId }),
+      });
+      if (!res.ok) {
+        throw new Error("Failed to report");
       }
-    },
-    [currentDrop, user, isReported],
-  );
+    } catch (err) {
+      console.error("Report failed:", err);
+      setReportedMap((prev) => ({ ...prev, [dropId]: false }));
+    }
+  }, [currentDrop, user, isReported]);
 
   // ── Handle comment submit ─────────────────────────────────────────────────
   const handleCommentSubmit = useCallback(
@@ -387,11 +389,13 @@ export default function LiveDropScreen() {
 
       // Send via WebSocket
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({
-          action: "send_comment",
-          dropId,
-          text: trimmed,
-        }));
+        wsRef.current.send(
+          JSON.stringify({
+            action: "send_comment",
+            dropId,
+            text: trimmed,
+          }),
+        );
       }
     },
     [currentDrop, user, commentText, commentedMap],
@@ -424,13 +428,19 @@ export default function LiveDropScreen() {
 
   // ── Compute countdown display values ───────────────────────────────────────
   const userSeconds = Math.max(0, Math.ceil(userRemainingMs / 1000));
-  const progress = Math.max(0, Math.min(1, userRemainingMs / USER_VIEW_DURATION_MS));
+  const progress = Math.max(
+    0,
+    Math.min(1, userRemainingMs / USER_VIEW_DURATION_MS),
+  );
 
-  const currentReactions = currentDrop ? reactionsMap[currentDrop.id] || {} : {};
+  const currentReactions = currentDrop
+    ? reactionsMap[currentDrop.id] || {}
+    : {};
   const maxCount = Math.max(1, ...Object.values(currentReactions));
   const totalVotes = Object.values(currentReactions).reduce((a, b) => a + b, 0);
   const topEmoji = EMOJIS.reduce(
-    (best, e) => ((currentReactions[e] || 0) > (currentReactions[best] || 0) ? e : best),
+    (best, e) =>
+      (currentReactions[e] || 0) > (currentReactions[best] || 0) ? e : best,
     EMOJIS[0],
   );
 
@@ -499,7 +509,9 @@ export default function LiveDropScreen() {
 
       {/* Immersive confession stage */}
       <div className="confession-stage swipeable-card" key={currentDrop.id}>
-        <span className="stage-quote" aria-hidden="true">“</span>
+        <span className="stage-quote" aria-hidden="true">
+          “
+        </span>
         <p className="stage-text">{currentDrop.text}</p>
 
         <div className="stage-foot">
@@ -574,14 +586,15 @@ export default function LiveDropScreen() {
         {EMOJIS.map((emoji) => {
           const count = currentReactions[emoji] || 0;
           const width = maxCount > 0 ? (count / maxCount) * 100 : 0;
-          const pct = totalVotes ? Math.round((count / totalVotes) * 100) : 0;
           return (
-            <div className={`pulse-row ${emoji === topEmoji && count > 0 ? "lead" : ""}`} key={emoji}>
+            <div
+              className={`pulse-row ${emoji === topEmoji && count > 0 ? "lead" : ""}`}
+              key={emoji}
+            >
               <span className="pulse-emoji">{emoji}</span>
               <div className="pulse-track">
                 <div className="pulse-fill" style={{ width: `${width}%` }} />
               </div>
-              <span className="pulse-pct">{pct}%</span>
             </div>
           );
         })}
@@ -590,7 +603,9 @@ export default function LiveDropScreen() {
       {/* Live comment stream */}
       {(() => {
         const comments = currentDrop ? commentsMap[currentDrop.id] || [] : [];
-        const hasCommented = currentDrop ? !!commentedMap[currentDrop.id] : false;
+        const hasCommented = currentDrop
+          ? !!commentedMap[currentDrop.id]
+          : false;
         return (
           <div className="comment-section">
             {comments.length > 0 && (
@@ -607,7 +622,9 @@ export default function LiveDropScreen() {
               <input
                 type="text"
                 className="comment-input"
-                placeholder={hasCommented ? "Comment sent ✓" : "Drop a comment…"}
+                placeholder={
+                  hasCommented ? "Comment sent ✓" : "Drop a comment…"
+                }
                 value={commentText}
                 onChange={(e) => setCommentText(e.target.value)}
                 maxLength={MAX_COMMENT_LENGTH}
@@ -617,7 +634,9 @@ export default function LiveDropScreen() {
               <button
                 type="submit"
                 className="comment-send"
-                disabled={hasCommented || !commentText.trim() || userRemainingMs <= 0}
+                disabled={
+                  hasCommented || !commentText.trim() || userRemainingMs <= 0
+                }
                 id="comment-send-btn"
               >
                 ↑
@@ -629,7 +648,11 @@ export default function LiveDropScreen() {
 
       {visibleDrops.length > 1 && (
         <div className="stage-nav">
-          <button onClick={handlePrev} disabled={currentIndex === 0} aria-label="Previous confession">
+          <button
+            onClick={handlePrev}
+            disabled={currentIndex === 0}
+            aria-label="Previous confession"
+          >
             ← Prev
           </button>
           <span>swipe</span>

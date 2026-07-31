@@ -6,9 +6,21 @@ import { useCommunityStats } from "../hooks/useCommunityStats";
 
 const PREFERENCE_TOGGLES = [
   { key: "darkMode", label: "Dark Mode", desc: "Toggle dark appearance" },
-  { key: "soundEffects", label: "Sound Effects", desc: "Tap and reaction audio feedback" },
-  { key: "vibration", label: "Vibration", desc: "Haptic feedback on reactions" },
-  { key: "autoScrollComments", label: "Auto-Scroll Comments", desc: "Scroll to latest comment automatically" },
+  {
+    key: "soundEffects",
+    label: "Sound Effects",
+    desc: "Tap and reaction audio feedback",
+  },
+  {
+    key: "vibration",
+    label: "Vibration",
+    desc: "Haptic feedback on reactions",
+  },
+  {
+    key: "autoScrollComments",
+    label: "Auto-Scroll Comments",
+    desc: "Scroll to latest comment automatically",
+  },
 ];
 
 export default function SettingsScreen() {
@@ -24,9 +36,19 @@ export default function SettingsScreen() {
       const saved = localStorage.getItem("verdict-settings");
       return saved
         ? { darkMode: false, ...JSON.parse(saved) }
-        : { darkMode: false, soundEffects: true, vibration: true, autoScrollComments: true };
+        : {
+            darkMode: false,
+            soundEffects: true,
+            vibration: true,
+            autoScrollComments: true,
+          };
     } catch {
-      return { darkMode: false, soundEffects: true, vibration: true, autoScrollComments: true };
+      return {
+        darkMode: false,
+        soundEffects: true,
+        vibration: true,
+        autoScrollComments: true,
+      };
     }
   });
 
@@ -35,7 +57,9 @@ export default function SettingsScreen() {
       const updated = { ...prev, [key]: !prev[key] };
       localStorage.setItem("verdict-settings", JSON.stringify(updated));
       if (key === "darkMode") {
-        document.documentElement.dataset.theme = updated.darkMode ? "dark" : "light";
+        document.documentElement.dataset.theme = updated.darkMode
+          ? "dark"
+          : "light";
       }
       return updated;
     });
@@ -63,27 +87,58 @@ export default function SettingsScreen() {
       <div className="screen-icon">⚙️</div>
       <h1 className="screen-title">Settings</h1>
 
-      <div className="glass-card" style={{ padding: "24px", display: "flex", flexDirection: "column", gap: "24px", marginTop: "24px" }}>
-
+      <div
+        className="glass-card"
+        style={{
+          padding: "24px",
+          display: "flex",
+          flexDirection: "column",
+          gap: "24px",
+          marginTop: "24px",
+        }}
+      >
         {/* ── Community Section ── */}
         <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-          <label style={{ fontSize: "14px", fontWeight: "bold", color: "var(--ink)" }}>Active Community</label>
+          <label
+            style={{
+              fontSize: "14px",
+              fontWeight: "bold",
+              color: "var(--ink)",
+            }}
+          >
+            Active Community
+          </label>
 
           {!changingCommunity ? (
             <div>
               <div className="settings-community-badge">
-                <span className="settings-community-name">{user?.communityId || "Global"}</span>
+                <span className="settings-community-name">
+                  {user?.communityId || "Global"}
+                </span>
               </div>
               {stats && (
-                <p style={{ fontSize: "13px", color: "var(--ink)", margin: "8px 0 0 0", fontWeight: 500 }}>
-                  {stats.memberCount} {stats.memberCount === 1 ? "member" : "members"}
-                  {" · "}
-                  {stats.activeCount} online now
+                <p
+                  style={{
+                    fontSize: "13px",
+                    color: "var(--ink)",
+                    margin: "8px 0 0 0",
+                    fontWeight: 500,
+                  }}
+                >
+                  {stats.memberCount}{" "}
+                  {stats.memberCount === 1 ? "member" : "members"}
                 </p>
               )}
-              <p style={{ fontSize: "13px", color: "var(--muted)", margin: "8px 0 0 0" }}>
-                Confessions only reach active users in this community. The server
-                reads your saved community from your account — not what the client sends.
+              <p
+                style={{
+                  fontSize: "13px",
+                  color: "var(--muted)",
+                  margin: "8px 0 0 0",
+                }}
+              >
+                Confessions are broadcast to active users in this community. The
+                server reads your saved community from your account — not what
+                the client sends.
               </p>
               <button
                 className="compose-btn secondary"
@@ -116,11 +171,24 @@ export default function SettingsScreen() {
           )}
         </div>
 
-        <hr style={{ border: "none", borderTop: "1px solid var(--hairline-strong)" }} />
+        <hr
+          style={{
+            border: "none",
+            borderTop: "1px solid var(--hairline-strong)",
+          }}
+        />
 
         {/* ── Preferences Section ── */}
         <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-          <label style={{ fontSize: "14px", fontWeight: "bold", color: "var(--ink)" }}>Preferences</label>
+          <label
+            style={{
+              fontSize: "14px",
+              fontWeight: "bold",
+              color: "var(--ink)",
+            }}
+          >
+            Preferences
+          </label>
           {PREFERENCE_TOGGLES.map(({ key, label, desc }) => (
             <div className="setting-row" key={key}>
               <div className="setting-info">
@@ -139,25 +207,54 @@ export default function SettingsScreen() {
           ))}
         </div>
 
-        <hr style={{ border: "none", borderTop: "1px solid var(--hairline-strong)" }} />
+        <hr
+          style={{
+            border: "none",
+            borderTop: "1px solid var(--hairline-strong)",
+          }}
+        />
 
         {/* ── Account Section ── */}
         <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-          <label style={{ fontSize: "14px", fontWeight: "bold", color: "var(--ink)" }}>Account</label>
+          <label
+            style={{
+              fontSize: "14px",
+              fontWeight: "bold",
+              color: "var(--ink)",
+            }}
+          >
+            Account
+          </label>
           <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
             {user?.photoURL && (
-              <img src={user.photoURL} alt="Profile" style={{ width: "40px", height: "40px", borderRadius: "50%", border: "2px solid var(--hairline-strong)" }} />
+              <img
+                src={user.photoURL}
+                alt="Profile"
+                style={{
+                  width: "40px",
+                  height: "40px",
+                  borderRadius: "50%",
+                  border: "2px solid var(--hairline-strong)",
+                }}
+              />
             )}
             <div>
-              <div style={{ fontWeight: "bold", fontSize: "14px" }}>{user?.displayName || "Anonymous"}</div>
-              <div style={{ fontSize: "12px", opacity: 0.6 }}>{user?.email}</div>
+              <div style={{ fontWeight: "bold", fontSize: "14px" }}>
+                {user?.displayName || "Anonymous"}
+              </div>
+              <div style={{ fontSize: "12px", opacity: 0.6 }}>
+                {user?.email}
+              </div>
             </div>
           </div>
-          <button className="compose-btn secondary" onClick={handleLogout} style={{ marginTop: "8px" }}>
+          <button
+            className="compose-btn secondary"
+            onClick={handleLogout}
+            style={{ marginTop: "8px" }}
+          >
             Sign Out
           </button>
         </div>
-
       </div>
     </div>
   );

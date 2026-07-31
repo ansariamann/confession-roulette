@@ -53,25 +53,41 @@ async function processExpiredDrop(dropId, confessionId) {
       reactionTotals[doc.id] = doc.data().count || 0;
     });
 
-    // Capture comments
-    const commentsSnapshot = await dropRef.collection("comments").get();
+    // Capture comments with proper sorting
+    const commentsSnapshot = await dropRef
+      .collection("comments")
+      .orderBy("createdAt", "asc")
+      .get();
     const finalComments = [];
     commentsSnapshot.forEach((doc) => {
-      finalComments.push({ id: doc.id, ...doc.data() });
+      const commentData = doc.data();
+      finalComments.push({
+        id: doc.id,
+        text: commentData.text,
+        createdAt: commentData.createdAt,
+        uid: commentData.uid,
+      });
     });
 
-    // 2. Write verdict (reaction totals and comments only — never the confession text)
-    await db.collection("verdicts").doc(dropId).set({
-      dropId,
-      confessionId: cId,
-      authorUid: dropData.authorUid || null,
-      recipientUids: dropData.recipientUids || [],
-      recipientCount: dropData.recipientCount || 0,
-      reactions: reactionTotals,
-      comments: finalComments,
-      totalReactions: Object.values(reactionTotals).reduce((a, b) => a + b, 0),
-      expiredAt: FieldValue.serverTimestamp(),
-    });
+    // 2. Write verdict (reaction totals, comments, AND confession text for the author)
+    await db
+      .collection("verdicts")
+      .doc(dropId)
+      .set({
+        dropId,
+        confessionId: cId,
+        authorUid: dropData.authorUid || null,
+        recipientUids: dropData.recipientUids || [],
+        recipientCount: dropData.recipientCount || 0,
+        text: dropData.text || "", // Store confession text so author can see it
+        reactions: reactionTotals,
+        comments: finalComments,
+        totalReactions: Object.values(reactionTotals).reduce(
+          (a, b) => a + b,
+          0,
+        ),
+        expiredAt: FieldValue.serverTimestamp(),
+      });
 
     // 3. Hard-delete subcollections
     await deleteSubcollection(dropRef, "reactions");
@@ -88,7 +104,7 @@ async function processExpiredDrop(dropId, confessionId) {
 
     console.log(
       `🗑️ Drop ${dropId} expired → verdict written, ` +
-      `drop + reactions + confession ${cId} hard-deleted`
+        `drop + reactions + confession ${cId} hard-deleted`,
     );
   } catch (err) {
     console.error(`❌ Failed to expire drop ${dropId}:`, err.message);
