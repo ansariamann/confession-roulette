@@ -588,9 +588,9 @@ async function processExpiredDrop(dropDoc) {
       const commentData = doc.data();
       finalComments.push({
         id: doc.id,
-        text: commentData.text,
-        createdAt: commentData.createdAt,
-        uid: commentData.uid,
+        text: commentData.text || "",
+        createdAt: commentData.createdAt || null,
+        uid: commentData.uid || null,
       });
     });
 

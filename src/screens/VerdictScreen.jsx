@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { doc, onSnapshot } from "firebase/firestore";
+import { doc, onSnapshot, collection, query, orderBy } from "firebase/firestore";
 import { db } from "../firebase";
 import { useAuth } from "../context/AuthProvider";
 import { useDrop } from "../context/DropContext";
+import { DROP_DURATION_MS } from "../constants";
 
 const EMOJIS = ["😂", "💀", "😬", "❤️", "😳"];
 
@@ -53,20 +54,99 @@ export default function VerdictScreen() {
   const { user } = useAuth();
   const { authorVerdicts } = useDrop();
 
+  // State
   const [urlVerdict, setUrlVerdict] = useState(null);
-  const [loading, setLoading] = useState(
-    !!dropId && authorVerdicts.length === 0,
-  );
+  const [loading, setLoading] = useState(!!dropId && authorVerdicts.length === 0);
   const [error, setError] = useState(null);
 
+  // Live state
+  const [isLive, setIsLive] = useState(false);
+  const [liveDropText, setLiveDropText] = useState("");
+  const [liveReactions, setLiveReactions] = useState({});
+  const [liveComments, setLiveComments] = useState([]);
+  const [userRemainingMs, setUserRemainingMs] = useState(DROP_DURATION_MS);
+  
+  // Carousel swipe state for static verdicts
   const [currentIndex, setCurrentIndex] = useState(0);
   const touchStartXRef = useRef(null);
 
-  // ── Fetch single verdict document if dropId is in URL ─────────────────────────
+  // ── 1. Live Drop Listener ───────────────────────────────────────────────────
   useEffect(() => {
     if (!dropId || !user) return;
 
-    // Check if already in authorVerdicts
+    let pollInterval = null;
+    let countdownInterval = null;
+    let unsubComments = () => {};
+
+    const unsubDrop = onSnapshot(doc(db, "drops", dropId), (snapshot) => {
+      if (snapshot.exists() && snapshot.data().status === "broadcasting") {
+        setIsLive(true);
+        setLoading(false);
+        const data = snapshot.data();
+        setLiveDropText(data.text || "");
+
+        // Setup countdown
+        if (data.broadcastStartedAt && typeof data.broadcastStartedAt.toMillis === "function") {
+          const startMs = data.broadcastStartedAt.toMillis();
+          if (!countdownInterval) {
+            const tick = () => {
+              const elapsed = Date.now() - startMs;
+              setUserRemainingMs(Math.max(0, DROP_DURATION_MS - elapsed));
+            };
+            tick();
+            countdownInterval = setInterval(tick, 500);
+          }
+        }
+
+        // Setup reactions polling
+        if (!pollInterval) {
+          const poll = async () => {
+            try {
+              const res = await fetch(`/api/react?dropId=${dropId}`, { cache: "no-store" });
+              if (res.ok) {
+                const rData = await res.json();
+                const counts = {};
+                for (const [k, v] of Object.entries(rData.reactions || {})) {
+                  counts[k] = parseInt(v, 10);
+                }
+                setLiveReactions(counts);
+              }
+            } catch (err) {}
+          };
+          poll();
+          pollInterval = setInterval(poll, 800);
+          
+          // Setup comments listener
+          const commentsQuery = query(
+            collection(db, "drops", dropId, "comments"),
+            orderBy("createdAt", "asc")
+          );
+          unsubComments = onSnapshot(commentsQuery, (cSnap) => {
+            const comments = cSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+            setLiveComments(comments);
+          });
+        }
+      } else {
+        // Drop is gone or expired.
+        setIsLive(false);
+        if (countdownInterval) clearInterval(countdownInterval);
+        if (pollInterval) clearInterval(pollInterval);
+        unsubComments();
+      }
+    });
+
+    return () => {
+      unsubDrop();
+      unsubComments();
+      if (countdownInterval) clearInterval(countdownInterval);
+      if (pollInterval) clearInterval(pollInterval);
+    };
+  }, [dropId, user]);
+
+  // ── 2. Static Verdict Listener (Fallback after live) ────────────────────────
+  useEffect(() => {
+    if (!dropId || !user || isLive) return;
+
     const existing = authorVerdicts.find((v) => v.id === dropId);
     if (existing) {
       setUrlVerdict(existing);
@@ -80,6 +160,7 @@ export default function VerdictScreen() {
         if (snapshot.exists()) {
           setUrlVerdict({ id: snapshot.id, ...snapshot.data() });
           setLoading(false);
+          setError(null);
         }
       },
       (err) => {
@@ -103,11 +184,11 @@ export default function VerdictScreen() {
       unsubscribe();
       clearTimeout(timeout);
     };
-  }, [dropId, user, authorVerdicts]);
+  }, [dropId, user, isLive, authorVerdicts]);
 
+  // ── Data Resolution ────────────────────────────────────────────────────────
   // Combine verdicts list (authorVerdicts prioritized, or urlVerdict)
-  const verdictsList =
-    authorVerdicts.length > 0 ? authorVerdicts : urlVerdict ? [urlVerdict] : [];
+  const verdictsList = authorVerdicts.length > 0 ? authorVerdicts : urlVerdict ? [urlVerdict] : [];
 
   // Clamp current index
   useEffect(() => {
@@ -116,18 +197,37 @@ export default function VerdictScreen() {
     }
   }, [verdictsList.length, currentIndex]);
 
-  const currentVerdict = verdictsList[currentIndex] || null;
+  // Live overriding logic
+  let activeText = "";
+  let activeReactions = {};
+  let activeComments = [];
+  
+  if (isLive) {
+    activeText = liveDropText;
+    activeReactions = liveReactions;
+    activeComments = liveComments;
+  } else {
+    const v = verdictsList[currentIndex] || null;
+    if (v) {
+      activeText = v.text || "";
+      activeReactions = v.reactions || {};
+      activeComments = v.comments || [];
+    }
+  }
 
-  // ── Auto-return to Compose screen after viewing ───────────────────────────
+  // ── Auto-return to Compose screen after viewing static verdict ─────────────
   useEffect(() => {
-    if (!currentVerdict) return;
-
+    // Only auto-return if we are viewing a static verdict
+    if (isLive || verdictsList.length === 0) return;
+    
+    // We only auto-return if dropId is set (viewing specific) or if they are in the carousel.
+    // Let's use the first verdict in the list to start the timer.
     const timer = setTimeout(() => {
       router.replace("/");
     }, AUTO_RETURN_MS);
 
     return () => clearTimeout(timer);
-  }, [currentVerdict, router]);
+  }, [verdictsList.length, isLive, router]);
 
   // ── Swipe handlers ────────────────────────────────────────────────────────
   const handlePrev = useCallback(() => {
@@ -139,11 +239,12 @@ export default function VerdictScreen() {
   }, [currentIndex, verdictsList.length]);
 
   function handleTouchStart(e) {
+    if (isLive) return; // No swiping while live
     touchStartXRef.current = e.touches[0].clientX;
   }
 
   function handleTouchEnd(e) {
-    if (touchStartXRef.current === null) return;
+    if (isLive || touchStartXRef.current === null) return;
     const diffX = touchStartXRef.current - e.changedTouches[0].clientX;
     touchStartXRef.current = null;
 
@@ -155,19 +256,15 @@ export default function VerdictScreen() {
   }
 
   // ── Derived state ──────────────────────────────────────────────────────────
-  const reactions = currentVerdict?.reactions || {};
-  const dominantEmoji = getDominantEmoji(reactions);
-  const caption = dominantEmoji
-    ? VERDICT_CAPTIONS[dominantEmoji]
-    : "No reactions this time";
-  const subtitle = dominantEmoji
-    ? VERDICT_SUBTITLES[dominantEmoji]
-    : "The confession vanished into the void";
-  const totalReactions = currentVerdict?.totalReactions || 0;
-  const maxCount = Math.max(1, ...Object.values(reactions));
+  const dominantEmoji = getDominantEmoji(activeReactions);
+  const caption = dominantEmoji ? VERDICT_CAPTIONS[dominantEmoji] : "No reactions this time";
+  const subtitle = dominantEmoji ? VERDICT_SUBTITLES[dominantEmoji] : "The confession vanished into the void";
+  
+  const totalReactions = Object.values(activeReactions).reduce((a, b) => a + b, 0);
+  const maxCount = Math.max(1, ...Object.values(activeReactions));
 
   // ── RENDER: No verdicts ───────────────────────────────────────────────────
-  if (!dropId && verdictsList.length === 0) {
+  if (!dropId && verdictsList.length === 0 && !isLive) {
     return (
       <div className="screen" id="verdict-screen">
         <div className="verdict-empty">
@@ -183,7 +280,7 @@ export default function VerdictScreen() {
   }
 
   // ── RENDER: Loading ────────────────────────────────────────────────────────
-  if (loading && verdictsList.length === 0) {
+  if (loading && verdictsList.length === 0 && !isLive) {
     return (
       <div className="screen" id="verdict-screen">
         <div className="verdict-loading">
@@ -195,7 +292,7 @@ export default function VerdictScreen() {
   }
 
   // ── RENDER: Error ──────────────────────────────────────────────────────────
-  if (error && verdictsList.length === 0) {
+  if (error && verdictsList.length === 0 && !isLive) {
     return (
       <div className="screen" id="verdict-screen">
         <div className="verdict-empty">
@@ -208,6 +305,8 @@ export default function VerdictScreen() {
   }
 
   // ── RENDER: Verdict result ─────────────────────────────────────────────────
+  const userSeconds = Math.max(0, Math.ceil(userRemainingMs / 1000));
+  
   return (
     <div
       className="screen"
@@ -216,8 +315,37 @@ export default function VerdictScreen() {
       onTouchEnd={handleTouchEnd}
     >
       <div className="verdict-result">
-        {/* Swipe deck header if multiple verdicts exist */}
-        {verdictsList.length > 1 && (
+        {/* Live Indicator Hero */}
+        {isLive && (
+          <div
+            className="glass-card"
+            style={{
+              marginBottom: "1.5rem",
+              padding: "1.25rem",
+              background: "var(--paper-sunk)",
+              borderRadius: "12px",
+              border: "1px solid var(--hairline)",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: "8px"
+            }}
+          >
+            <div className="live-meta-left" style={{ color: "var(--ink)" }}>
+              <span className="live-pulse" />
+              <span style={{ fontSize: "0.8rem", textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 600 }}>Live Reaction Gathering</span>
+            </div>
+            <div className={`live-timer ${userSeconds <= 10 ? "urgent" : ""}`} style={{ fontSize: "3rem", fontWeight: "800", color: "var(--ink)", lineHeight: 1 }}>
+              {String(userSeconds).padStart(2, "0")}s
+            </div>
+            <div style={{ fontSize: "0.75rem", color: "var(--ink-soft)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              remaining before final verdict
+            </div>
+          </div>
+        )}
+
+        {/* Swipe deck header if multiple verdicts exist (not in live mode) */}
+        {!isLive && verdictsList.length > 1 && (
           <div className="swipe-header">
             <button
               className="swipe-nav-btn"
@@ -248,24 +376,25 @@ export default function VerdictScreen() {
         )}
 
         {/* Card counter badge */}
-        {verdictsList.length > 1 && (
+        {!isLive && verdictsList.length > 1 && (
           <div className="card-badge">
             Verdict {currentIndex + 1} of {verdictsList.length} ⟷
           </div>
         )}
 
         {/* Confession Text */}
-        {currentVerdict?.text && (
+        {activeText && (
           <div
             className="verdict-confession glass-card"
             style={{
               marginBottom: "1.5rem",
               padding: "1rem 1.25rem",
-              background: "rgba(255,255,255,0.08)",
+              background: "var(--paper-sunk)",
               borderRadius: "12px",
+              border: "1px solid var(--hairline)",
               fontSize: "1rem",
               lineHeight: "1.5",
-              color: "rgba(255,255,255,0.95)",
+              color: "var(--ink)",
               textAlign: "center",
             }}
           >
@@ -274,29 +403,35 @@ export default function VerdictScreen() {
                 fontSize: "0.75rem",
                 textTransform: "uppercase",
                 letterSpacing: "0.1em",
-                opacity: 0.6,
+                color: "var(--ink-soft)",
                 marginBottom: "0.5rem",
               }}
             >
               Your Confession
             </div>
-            "{currentVerdict.text}"
+            "{activeText}"
           </div>
         )}
 
         {/* Dominant emoji hero */}
-        <div className="verdict-hero">
-          <span className="verdict-dominant-emoji">
-            {dominantEmoji || "🤷"}
-          </span>
-        </div>
+        {!isLive && (
+          <div className="verdict-hero">
+            <span className="verdict-dominant-emoji">
+              {dominantEmoji || "🤷"}
+            </span>
+          </div>
+        )}
 
         {/* Caption */}
-        <h1 className="screen-title verdict-caption">{caption}</h1>
-        <p className="screen-subtitle">{subtitle}</p>
+        {!isLive && (
+          <>
+            <h1 className="screen-title verdict-caption">{caption}</h1>
+            <p className="screen-subtitle">{subtitle}</p>
+          </>
+        )}
 
         {/* Stats badge */}
-        <div className="verdict-stats">
+        <div className="verdict-stats" style={isLive ? { marginTop: "0.5rem" } : {}}>
           <span className="verdict-stat-number">{totalReactions}</span>
           <span className="verdict-stat-label">
             {totalReactions === 1 ? "reaction" : "reactions"} total
@@ -306,9 +441,9 @@ export default function VerdictScreen() {
         {/* Final bar chart */}
         <div className="verdict-barchart glass-card">
           {EMOJIS.map((emoji) => {
-            const count = reactions[emoji] || 0;
+            const count = activeReactions[emoji] || 0;
             const width = maxCount > 0 ? (count / maxCount) * 100 : 0;
-            const isDominant = emoji === dominantEmoji;
+            const isDominant = !isLive && emoji === dominantEmoji;
             return (
               <div
                 className={`bar-row ${isDominant ? "bar-row-dominant" : ""}`}
@@ -318,7 +453,7 @@ export default function VerdictScreen() {
                 <div className="bar-track">
                   <div
                     className={`bar-fill ${isDominant ? "bar-fill-dominant" : ""}`}
-                    style={{ width: `${width}%` }}
+                    style={{ width: `${width}%`, transition: isLive ? "width 0.3s ease-out" : "none" }}
                   />
                 </div>
               </div>
@@ -326,8 +461,8 @@ export default function VerdictScreen() {
           })}
         </div>
 
-        {/* Final Comments */}
-        {currentVerdict?.comments && currentVerdict.comments.length > 0 && (
+        {/* Comments */}
+        {activeComments && activeComments.length > 0 && (
           <div
             className="comment-section static-comments"
             style={{ marginTop: "1rem", width: "100%" }}
@@ -337,24 +472,25 @@ export default function VerdictScreen() {
                 fontSize: "0.75rem",
                 textTransform: "uppercase",
                 letterSpacing: "0.1em",
-                opacity: 0.6,
+                color: "var(--ink-soft)",
                 marginBottom: "0.5rem",
                 textAlign: "center",
               }}
             >
-              Comments ({currentVerdict.comments.length})
+              Comments ({activeComments.length})
             </div>
             <div
               className="comment-stream"
               style={{
                 maxHeight: "150px",
                 padding: "0.5rem",
-                background: "rgba(255,255,255,0.05)",
+                background: "var(--paper-sunk)",
                 borderRadius: "12px",
+                border: "1px solid var(--hairline)",
                 overflowY: "auto",
               }}
             >
-              {currentVerdict.comments.map((c) => (
+              {activeComments.map((c) => (
                 <div className="comment-bubble" key={c.id}>
                   <span className="comment-text">{c.text}</span>
                 </div>
@@ -364,7 +500,7 @@ export default function VerdictScreen() {
         )}
 
         {/* Auto-return indicator */}
-        <p className="verdict-return-hint">Returning to compose shortly…</p>
+        {!isLive && <p className="verdict-return-hint">Returning to compose shortly…</p>}
       </div>
     </div>
   );

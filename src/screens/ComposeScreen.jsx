@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { doc, setDoc, onSnapshot } from "firebase/firestore";
 import { db, serverTimestamp, auth, API_URL } from "../firebase";
 import { useAuth } from "../context/AuthProvider";
@@ -33,6 +34,7 @@ function saveComposeState(uid, state) {
 }
 
 export default function ComposeScreen() {
+  const router = useRouter();
   const { user } = useAuth();
   const { setIsComposing, pendingVerdict } = useDrop();
   const { playTap, vibrate } = useFeedback();
@@ -166,11 +168,9 @@ export default function ComposeScreen() {
 
     setSending(true);
     
-    // OPTIMISTIC UI: Immediately clear text and transition to queued state
+    // OPTIMISTIC UI: Immediately clear text
     const previousText = text;
     setText("");
-    setQueued(true);
-    setDropStatus("waiting");
     playTap();
     vibrate(30);
 
@@ -197,16 +197,14 @@ export default function ComposeScreen() {
       if (!res.ok) {
         throw new Error(result.error || "Submission failed");
       }
-
-      setConfessionId(result.confessionId || null);
-      setDropId(result.dropId || null);
-      setRemainingSec(DROP_DURATION_SEC);
-      setDropStatus(result.status === "live" ? "live" : "waiting");
+      // Redirect immediately to the VerdictScreen to see live reactions!
+      if (result.dropId) {
+        router.push(`/verdict/${result.dropId}`);
+      }
     } catch (err) {
       console.error("Failed to submit confession:", err);
       // Revert optimistic UI update on failure
       setText(previousText);
-      setQueued(false);
       alert(err.message || "Failed to drop confession. Try again.");
     } finally {
       setSending(false);

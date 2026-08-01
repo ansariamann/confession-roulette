@@ -4,7 +4,7 @@ if (typeof navigator === "undefined") {
 import { NextResponse } from "next/server";
 import { Redis } from "@upstash/redis";
 import { initializeApp, getApps } from "firebase/app";
-import { getAuth, signInWithEmailAndPassword } from "firebase/auth";
+import { getAuth, signInWithEmailAndPassword, inMemoryPersistence, setPersistence } from "firebase/auth";
 import { getFirestore, doc, setDoc, deleteDoc, collection, getDocs } from "firebase/firestore";
 
 export const runtime = "edge";
@@ -34,6 +34,7 @@ export async function POST(req) {
 
     // 1. Authenticate as Bot User
     if (!auth.currentUser || auth.currentUser.uid !== "admin_bot_uid") {
+      await setPersistence(auth, inMemoryPersistence);
       await signInWithEmailAndPassword(auth, "bot@confessionroulette.com", "super_secret_bot_password");
     }
 

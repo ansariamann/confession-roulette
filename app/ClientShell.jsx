@@ -112,7 +112,7 @@ function Header() {
 }
 
 function DropAutoNav() {
-  const { pendingDrop, pendingVerdict, consumeVerdict, consumeDrop, isComposing } = useDrop();
+  const { pendingDrop, pendingVerdict, consumeVerdict, consumeDrop, isComposing, pendingAuthorDrop, consumeAuthorDrop } = useDrop();
   const router = useRouter();
   const pathname = usePathname();
 
@@ -136,6 +136,15 @@ function DropAutoNav() {
     consumeVerdict();
     router.replace(`/verdict/${verdictId}`);
   }, [pendingVerdict, consumeVerdict, router]);
+
+  useEffect(() => {
+    if (!pendingAuthorDrop) return;
+    if (pathname.startsWith(`/verdict/${pendingAuthorDrop.id}`)) return; // already there
+
+    const dropId = pendingAuthorDrop.id;
+    consumeAuthorDrop();
+    router.replace(`/verdict/${dropId}`);
+  }, [pendingAuthorDrop, consumeAuthorDrop, router, pathname]);
 
   return null;
 }

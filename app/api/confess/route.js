@@ -23,7 +23,10 @@ const firebaseConfig = {
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
 const auth = getAuth(app);
 const db = getFirestore(app);
-const qstash = new QStashClient({ token: process.env.QSTASH_TOKEN || "" });
+const qstash = new QStashClient({ 
+  token: process.env.QSTASH_TOKEN || "",
+  ...(process.env.QSTASH_URL ? { baseUrl: process.env.QSTASH_URL } : {})
+});
 const comprehend = new ComprehendClient({
   region: process.env.AWS_REGION || "us-east-1",
   credentials: {

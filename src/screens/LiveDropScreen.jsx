@@ -12,7 +12,7 @@ import {
   query,
   orderBy,
 } from "firebase/firestore";
-import { db, auth, API_URL, WS_URL } from "../firebase";
+import { db, auth, API_URL } from "../firebase";
 import { useAuth } from "../context/AuthProvider";
 import { useDrop } from "../context/DropContext";
 import useFeedback from "../hooks/useFeedback";
@@ -179,7 +179,7 @@ export default function LiveDropScreen() {
 
     const poll = async () => {
       try {
-        const res = await fetch(`/api/react?dropId=${currentDrop.id}`);
+        const res = await fetch(`/api/react?dropId=${currentDrop.id}`, { cache: "no-store" });
         if (!res.ok) return;
         const data = await res.json();
         const counts = {};
@@ -243,9 +243,7 @@ export default function LiveDropScreen() {
       .catch(() => {}); // Ignore errors (drop may have been deleted)
   }, [currentDrop, user]);
 
-  // ── Load existing comments from Firestore, then listen via WebSocket ───────
-  const wsRef = useRef(null);
-
+  // ── Load existing comments from Firestore ───────
   useEffect(() => {
     if (!currentDrop) return;
     const dropId = currentDrop.id;
@@ -260,32 +258,8 @@ export default function LiveDropScreen() {
       setCommentsMap((prev) => ({ ...prev, [dropId]: comments }));
     });
 
-    const ws = new WebSocket(`${WS_URL}?dropId=${dropId}`);
-    wsRef.current = ws;
-
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === "new_comment") {
-          setCommentsMap((prev) => {
-            const existing = prev[dropId] || [];
-            if (existing.some((c) => c.id === data.comment.id)) return prev;
-            return { ...prev, [dropId]: [...existing, data.comment] };
-          });
-        }
-      } catch (err) {
-        console.error("Failed to parse WS message", err);
-      }
-    };
-
     return () => {
       unsub();
-      if (
-        ws.readyState === WebSocket.OPEN ||
-        ws.readyState === WebSocket.CONNECTING
-      ) {
-        ws.close();
-      }
     };
   }, [currentDrop]);
 
