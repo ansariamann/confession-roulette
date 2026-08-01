@@ -1,7 +1,5 @@
 {
   "name": "confession-roulette",
   "compatibility_date": "2026-08-01",
-  "assets": {
-    "directory": ".vercel/output/static"
-  }
+  "pages_build_output_dir": ".vercel/output/static"
 }
