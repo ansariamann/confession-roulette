@@ -33,3 +33,6 @@ server/.env
 # Next.js
 .next
 
+
+.wrangler
+
