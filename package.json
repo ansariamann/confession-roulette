@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:pages": "npx @cloudflare/next-on-pages@1 && echo _worker.js > .vercel/output/static/.assetsignore",
     "start": "next start",
     "lint": "next lint"
   },
