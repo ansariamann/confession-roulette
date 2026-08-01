@@ -11,29 +11,34 @@ import { getFirestore, collection, addDoc, getDocs, query, where, serverTimestam
 export const runtime = "edge";
 
 // Initialize Firebase client SDK for the Edge environment
-const firebaseConfig = {
-  apiKey: process.env.VITE_FIREBASE_API_KEY,
-  authDomain: process.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: process.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: process.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.VITE_FIREBASE_APP_ID
-};
+let app, auth, db, qstash, comprehend;
 
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
-const auth = getAuth(app);
-const db = getFirestore(app);
-const qstash = new QStashClient({ 
-  token: process.env.QSTASH_TOKEN || "",
-  ...(process.env.QSTASH_URL ? { baseUrl: process.env.QSTASH_URL } : {})
-});
-const comprehend = new ComprehendClient({
-  region: process.env.AWS_REGION || "us-east-1",
-  credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID || "",
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || "",
-  }
-});
+function initServices() {
+  if (app) return;
+  const firebaseConfig = {
+    apiKey: process.env.VITE_FIREBASE_API_KEY,
+    authDomain: process.env.VITE_FIREBASE_AUTH_DOMAIN,
+    projectId: process.env.VITE_FIREBASE_PROJECT_ID,
+    storageBucket: process.env.VITE_FIREBASE_STORAGE_BUCKET,
+    messagingSenderId: process.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+    appId: process.env.VITE_FIREBASE_APP_ID
+  };
+
+  app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
+  auth = getAuth(app);
+  db = getFirestore(app);
+  qstash = new QStashClient({ 
+    token: process.env.QSTASH_TOKEN || "",
+    ...(process.env.QSTASH_URL ? { baseUrl: process.env.QSTASH_URL } : {})
+  });
+  comprehend = new ComprehendClient({
+    region: process.env.AWS_REGION || "us-east-1",
+    credentials: {
+      accessKeyId: process.env.AWS_ACCESS_KEY_ID || "",
+      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || "",
+    }
+  });
+}
 
 const PII_PATTERNS = [
   { name: "PII_PHONE", pattern: /(?:\+?\d{1,3}[-.\s]?)?\(?\d{2,5}\)?[-.\s]?\d{3,5}[-.\s]?\d{3,5}\b/ },
@@ -44,6 +49,7 @@ const PII_PATTERNS = [
 
 export async function POST(req) {
   try {
+    initServices();
     const { text, communityId, uid } = await req.json();
     if (!text || !uid) return NextResponse.json({ error: "Missing fields" }, { status: 400 });
 

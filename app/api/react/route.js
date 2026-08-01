@@ -3,12 +3,18 @@ import { Redis } from "@upstash/redis";
 
 export const runtime = "edge";
 
-const redis = new Redis({
-  url: process.env.UPSTASH_REDIS_REST_URL || "",
-  token: process.env.UPSTASH_REDIS_REST_TOKEN || "",
-});
+let redis;
+
+function initServices() {
+  if (redis) return;
+  redis = new Redis({
+    url: process.env.UPSTASH_REDIS_REST_URL || "",
+    token: process.env.UPSTASH_REDIS_REST_TOKEN || "",
+  });
+}
 
 export async function GET(req) {
+  initServices();
   const { searchParams } = new URL(req.url);
   const dropId = searchParams.get("dropId");
   if (!dropId) return NextResponse.json({ error: "Missing dropId" }, { status: 400 });
@@ -24,6 +30,7 @@ export async function GET(req) {
 
 export async function POST(req) {
   try {
+    initServices();
     const body = await req.json();
     const { dropId, emoji, uid } = body;
 
