@@ -498,28 +498,8 @@ export default function VerdictScreen() {
           </span>
         </div>
 
-        {/* Final bar chart */}
-        <div className="verdict-barchart glass-card">
-          {EMOJIS.map((emoji) => {
-            const count = activeReactions[emoji] || 0;
-            const width = maxCount > 0 ? (count / maxCount) * 100 : 0;
-            const isDominant = !isLive && emoji === dominantEmoji;
-            return (
-              <div
-                className={`bar-row ${isDominant ? "bar-row-dominant" : ""}`}
-                key={emoji}
-              >
-                <span className="bar-emoji">{emoji}</span>
-                <div className="bar-track">
-                  <div
-                    className={`bar-fill ${isDominant ? "bar-fill-dominant" : ""}`}
-                    style={{ width: `${width}%`, transition: isLive ? "width 0.3s ease-out" : "none" }}
-                  />
-                </div>
-              </div>
-            );
-          })}
-        </div>
+        {/* Reactions, Instagram-style single line */}
+        {reactionRow}
 
         {/* Comments */}
         {activeComments && activeComments.length > 0 && (
