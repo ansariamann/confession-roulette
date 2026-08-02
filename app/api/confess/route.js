@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { Client as QStashClient } from "@upstash/qstash";
 
 export const runtime = "edge";
 
@@ -134,19 +133,25 @@ export async function POST(req) {
     });
     console.log("Reactions seeded.");
 
-    // 6. Schedule Expiry via QStash
-    console.log("Scheduling QStash...");
-    const qstash = new QStashClient({ 
-      token: process.env.QSTASH_TOKEN || "",
-      ...(process.env.QSTASH_URL ? { baseUrl: process.env.QSTASH_URL } : {})
-    });
+    // 6. Schedule Expiry via QStash (REST)
+    console.log("Scheduling QStash via REST...");
     const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://your-deployment-url.pages.dev";
-    await qstash.publishJSON({
-      url: `${baseUrl}/api/expire`,
-      body: { dropId: dropId, authorUid: uid, text },
-      delay: "10s",
-    });
-    console.log("QStash scheduled.");
+    const qstashToken = process.env.QSTASH_TOKEN || "";
+    
+    if (qstashToken) {
+      await fetch(`https://qstash.upstash.io/v2/publish/${baseUrl}/api/expire`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${qstashToken}`,
+          "Content-Type": "application/json",
+          "Upstash-Delay": "10s"
+        },
+        body: JSON.stringify({ dropId: dropId, authorUid: uid, text })
+      });
+      console.log("QStash scheduled.");
+    } else {
+      console.warn("QSTASH_TOKEN missing, skipping expiry scheduling");
+    }
 
     return NextResponse.json({ success: true, dropId: dropId });
   } catch (error) {
