@@ -1,6 +1,3 @@
-if (typeof navigator === "undefined") {
-  globalThis.navigator = { userAgent: "Cloudflare-Workers" };
-}
 import { NextResponse } from "next/server";
 import { Client as QStashClient } from "@upstash/qstash";
 
