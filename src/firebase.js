@@ -12,7 +12,6 @@ export { serverTimestamp, doc, setDoc };
 export const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://886awm9wzc.execute-api.us-east-1.amazonaws.com/prod";
 export const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "wss://2fhcm11n2d.execute-api.us-east-1.amazonaws.com/prod";
 
-
 const firebaseConfig = {
   apiKey: "AIzaSyCn1M6nfNHC1hdky-egJVN6dFYo6xkxKRo",
   authDomain: "confession-roulette-a6b4b.firebaseapp.com",
@@ -23,34 +22,29 @@ const firebaseConfig = {
   measurementId: "G-5D839RZ3LT"
 };
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
-
-// Auth
-export const auth = getAuth(app);
-const googleProvider = new GoogleAuthProvider();
-
-// Try popup first; if it fails (mobile / blocked), fall back to redirect
-export const loginWithGoogle = async () => {
-  try {
-    return await signInWithPopup(auth, googleProvider);
-  } catch (err) {
-    if (err.code === "auth/popup-blocked" || err.code === "auth/cancelled-popup-request") {
-      return signInWithRedirect(auth, googleProvider);
-    }
-    throw err;
-  }
-};
+export let app, auth, db, googleProvider;
+export let loginWithGoogle, logout;
 
 if (typeof window !== "undefined") {
+  app = initializeApp(firebaseConfig);
+  auth = getAuth(app);
+  db = getFirestore(app);
+  googleProvider = new GoogleAuthProvider();
+
+  loginWithGoogle = async () => {
+    try {
+      return await signInWithPopup(auth, googleProvider);
+    } catch (err) {
+      if (err.code === "auth/popup-blocked" || err.code === "auth/cancelled-popup-request") {
+        return signInWithRedirect(auth, googleProvider);
+      }
+      throw err;
+    }
+  };
+
   getRedirectResult(auth).catch((err) => {
     console.warn("Redirect result check:", err.message);
   });
+
+  logout = () => signOut(auth);
 }
-
-export const logout = () => signOut(auth);
-
-// Firestore
-export const db = getFirestore(app);
-
-export default app;

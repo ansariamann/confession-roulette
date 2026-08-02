@@ -1,0 +1,105 @@
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1mEvalError: Code generation from strings disallowed for this context[0m
+
+      at Function (<anonymous>)
+      at f (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:181:36754)
+      at s.get (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:184:35287)
+      at j.resolve (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:184:51348)
+      at s.resolveAll (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:184:37888)
+      at l.resolveAll (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:184:5980)
+      at l.resolveAll (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:184:5980)
+      at l.resolveAll (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:184:5980)
+      at l.resolveAll (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:184:43647)
+      at l.fromJSON (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:184:41706) {
+    digest: '1681754034'
+  }
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1mUncaught EvalError: Code generation from strings disallowed for this context Error[0m
+
+      at f (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:181:36754)
+      at get (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:184:35287)
+      at j.resolve (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:184:51348)
+      at s.resolveAll (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:184:37888)
+      at l.resolveAll (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:184:5980)
+      at l.resolveAll (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:184:5980)
+      at l.resolveAll (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:184:5980)
+      at l.resolveAll (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:184:43647)
+      at l.fromJSON (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:184:41706)
+      at module evaluation (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:191:26835)
+      at instantiateModule (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:432:52195)
+      at getOrInstantiateModuleFromParent (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:432:52594)
+      at commonJsRequire (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:432:41967)
+      at module evaluation (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:191:43221)
+      at instantiateModule (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:432:52195)
+      at getOrInstantiateModuleFromParent (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:432:52594)
+      at esmImport (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:432:41430)
+      at module evaluation (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:197:80096)
+      at instantiateModule (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:432:52195)
+      at getOrInstantiateModuleFromParent (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:432:52594)
+      at esmImport (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:432:41430)
+      at module evaluation (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:362:16031)
+      at instantiateModule (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:432:52195)
+      at getOrInstantiateModuleFromParent (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:432:52594)
+      at commonJsRequire (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:432:41967)
+      at require (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:174:26742)
+      at globalThis.__next_require__ (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:174:27352)
+      at f (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:100:14432)
+      at z (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:100:26390)
+      at Q (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:100:30626)
+      at null.<anonymous> (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:100:40751)
+      at e4 (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:100:40791)
+      at e4 (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:100:41231)
+      at e4 (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:100:40902)
+      at e4 (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:100:40902)
+      at e4 (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:100:41231)
+      at e4 (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:100:40902)
+      at e4 (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:100:40902)
+      at e4 (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:100:41231)
+      at e4 (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:100:40902)
+      at e4 (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:100:40902)
+      at e4 (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:100:40902)
+      at e4 (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:100:41231)
+      at ev (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:100:39629)
+      at q (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:100:26023)
+      at F (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:100:25172)
+      at eg (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:100:37799)
+      at null.<anonymous> (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:100:39309)
+      at ey (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:100:39342)
+      at t4 (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:100:42283)
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1mUncaught EvalError: Code generation from strings disallowed for this context [0m
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1mEvalError: Code generation from strings disallowed for this context[0m
+
+      at Function (<anonymous>)
+      at f (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:181:36754)
+      at s.get (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:184:35287)
+      at j.resolve (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:184:51348)
+      at s.resolveAll (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:184:37888)
+      at l.resolveAll (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:184:5980)
+      at l.resolveAll (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:184:5980)
+      at l.resolveAll (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:184:5980)
+      at l.resolveAll (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:184:43647)
+      at l.fromJSON (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:184:41706) {
+    digest: '1681754034'
+  }
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1m⨯ EvalError: Code generation from strings disallowed for this context[0m
+
+      at Function (<anonymous>)
+      at f (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:181:36754)
+      at s.get (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:184:35287)
+      at j.resolve (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:184:51348)
+      at s.resolveAll (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:184:37888)
+      at l.resolveAll (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:184:5980)
+      at l.resolveAll (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:184:5980)
+      at l.resolveAll (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:184:5980)
+      at l.resolveAll (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:184:43647)
+      at l.fromJSON (file:///C:/Users/amana/Desktop/Confession%20Roulette/.open-next/server-functions/default/handler.mjs:184:41706) {
+    digest: '1681754034'
+  }
+
+

@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, useRef } from "react";
 import { onAuthStateChanged } from "firebase/auth";
-import { auth, loginWithGoogle, logout, db, doc, API_URL } from "../firebase";
+import { auth, loginWithGoogle, logout, db, doc } from "../firebase";
 import { getDoc, serverTimestamp, setDoc } from "firebase/firestore";
 
 const AuthContext = createContext({
@@ -61,7 +61,8 @@ export default function AuthProvider({ children }) {
     if (!user) return null;
     try {
       const token = await auth.currentUser.getIdToken();
-      const res = await fetch(`${API_URL}/community/join`, {
+      // Use the local Next.js API route (always available, regardless of external server)
+      const res = await fetch(`/api/community/join`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

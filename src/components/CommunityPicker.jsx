@@ -7,7 +7,7 @@ import {
   limit,
   getDocs,
 } from "firebase/firestore";
-import { auth, db, API_URL } from "../firebase";
+import { auth, db } from "../firebase";
 
 /**
  * CommunityPicker — Autocomplete dropdown for selecting or creating communities.
@@ -47,7 +47,7 @@ export default function CommunityPicker({
         communities.map(async (c) => {
           try {
             const params = new URLSearchParams({ communityName: c.name });
-            const res = await fetch(`${API_URL}/community/stats?${params}`, {
+            const res = await fetch(`/api/community/stats?${params}`, {
               headers: { Authorization: `Bearer ${token}` },
             });
             if (!res.ok) return c;

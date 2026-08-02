@@ -1,0 +1,45 @@
+
+ ⛅️ wrangler 4.118.0
+────────────────────
+Using secrets defined in .env
+Your Worker has access to the following bindings:
+Binding                                                          Resource                  Mode
+env.WORKER_SELF_REFERENCE (confession-roulette)                  Worker                    local [connected]
+env.ASSETS                                                       Assets                    local
+env.VITE_API_URL ("(hidden)")                                    Environment Variable      local
+env.VITE_WS_URL ("(hidden)")                                     Environment Variable      local
+env.NEXT_PUBLIC_SITE_URL ("(hidden)")                            Environment Variable      local
+env.UPSTASH_REDIS_REST_URL ("(hidden)")                          Environment Variable      local
+env.UPSTASH_REDIS_REST_TOKEN ("(hidden)")                        Environment Variable      local
+env.QSTASH_URL ("(hidden)")                                      Environment Variable      local
+env.QSTASH_TOKEN ("(hidden)")                                    Environment Variable      local
+env.AWS_ACCESS_KEY_ID ("(hidden)")                               Environment Variable      local
+env.AWS_SECRET_ACCESS_KEY ("(hidden)")                           Environment Variable      local
+env.AWS_REGION ("(hidden)")                                      Environment Variable      local
+env.VITE_FIREBASE_API_KEY ("(hidden)")                           Environment Variable      local
+env.VITE_FIREBASE_AUTH_DOMAIN ("(hidden)")                       Environment Variable      local
+env.VITE_FIREBASE_PROJECT_ID ("(hidden)")                        Environment Variable      local
+env.VITE_FIREBASE_STORAGE_BUCKET ("(hidden)")                    Environment Variable      local
+env.VITE_FIREBASE_MESSAGING_SENDER_ID ("(hidden)")               Environment Variable      local
+env.VITE_FIREBASE_APP_ID ("(hidden)")                            Environment Variable      local
+env.VITE_FIREBASE_MEASUREMENT_ID ("(hidden)")                    Environment Variable      local
+
+
+Service bindings, Durable Object bindings, and Tail consumers connect to other Wrangler or Vite dev processes running locally, with their connection status indicated by [connected] or [not connected]. For more details, refer to https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/#local-development
+
+Wrangler detected this dev session is running in an AI agent.
+The Local Explorer API is available at http://127.0.0.1:8789/cdn-cgi/local/explorer/api
+Useful routes:
+  GET http://127.0.0.1:8789/cdn-cgi/local/explorer/api/local/workers - local Workers and bindings
+  GET http://127.0.0.1:8789/cdn-cgi/local/explorer/api/storage/kv/namespaces - KV namespaces
+  GET http://127.0.0.1:8789/cdn-cgi/local/explorer/api/d1/database - D1 databases
+  GET http://127.0.0.1:8789/cdn-cgi/local/explorer/api/r2/buckets - R2 buckets
+  GET http://127.0.0.1:8789/cdn-cgi/local/explorer/api/workers/durable_objects/namespaces - Durable Object namespaces
+  GET http://127.0.0.1:8789/cdn-cgi/local/explorer/api/workflows - Workflows
+  POST http://127.0.0.1:8789/cdn-cgi/local/explorer/api/local/observability/query - run a read-only SQL query (SELECT/WITH only) over captured request traces and console logs. Tables: spans, logs (read attributes via json(attributes)). Example:
+    curl -X POST http://127.0.0.1:8789/cdn-cgi/local/explorer/api/local/observability/query -H 'Content-Type: application/json' -d '{"sql":"SELECT service, name, outcome, duration_ms FROM spans WHERE parent_id IS NULL LIMIT 20"}'
+If the routes above don't cover what you need, fetch the full OpenAPI schema (large - use only as a last resort):
+  GET http://127.0.0.1:8789/cdn-cgi/local/explorer/api - OpenAPI schema
+⎔ Starting local server...
+[wrangler:info] ✨ Parsed 1 valid header rule.
+[wrangler:info] Ready on http://127.0.0.1:8789

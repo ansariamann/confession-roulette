@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { auth, API_URL } from "../firebase";
+import { auth } from "../firebase";
 
 /**
  * Fetch live member + online counts for a community from the server.
@@ -21,7 +21,8 @@ export function useCommunityStats(communityId) {
       try {
         const token = await auth.currentUser.getIdToken();
         const params = new URLSearchParams({ communityName: communityId });
-        const res = await fetch(`${API_URL}/community/stats?${params}`, {
+        // Use local Next.js API route instead of external server
+        const res = await fetch(`/api/community/stats?${params}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (!res.ok) throw new Error("Failed to fetch community stats");
