@@ -306,7 +306,67 @@ export default function VerdictScreen() {
 
   // ── RENDER: Verdict result ─────────────────────────────────────────────────
   const userSeconds = Math.max(0, Math.ceil(userRemainingMs / 1000));
-  
+  const livePct = Math.max(0, Math.min(1, userRemainingMs / DROP_DURATION_MS)) * 100;
+
+  const reactionRow = (
+    <div className="react-line">
+      {EMOJIS.map((emoji) => {
+        const count = activeReactions[emoji] || 0;
+        return (
+          <span
+            key={emoji}
+            className={`react-chip ${count > 0 ? "on" : ""} ${
+              !isLive && emoji === dominantEmoji && count > 0 ? "lead" : ""
+            }`}
+          >
+            <span className="react-chip-emoji">{emoji}</span>
+            <span className="react-chip-count">{count}</span>
+          </span>
+        );
+      })}
+      <span className="react-line-total">{totalReactions}</span>
+    </div>
+  );
+
+  // ── RENDER: Live gathering (minimal) ───────────────────────────────────────
+  if (isLive) {
+    return (
+      <div className="screen" id="verdict-screen">
+        <div className="vlive">
+          <div className="vlive-head">
+            <span className="vlive-label">
+              <span className="live-pulse" />
+              gathering
+            </span>
+            <span className={`vlive-secs ${userSeconds <= 10 ? "urgent" : ""}`}>
+              {String(userSeconds).padStart(2, "0")}
+            </span>
+          </div>
+
+          <div className="vlive-track">
+            <span className="vlive-track-fill" style={{ width: `${livePct}%` }} />
+          </div>
+
+          <p className="vlive-text">{activeText}</p>
+
+          {reactionRow}
+
+          <div className="vlive-comments">
+            {activeComments.length === 0 ? (
+              <p className="vlive-empty">No comments yet</p>
+            ) : (
+              activeComments.map((c) => (
+                <div className="vlive-comment" key={c.id}>
+                  {c.text}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className="screen"
