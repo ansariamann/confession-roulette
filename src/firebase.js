@@ -42,10 +42,11 @@ export const loginWithGoogle = async () => {
   }
 };
 
-// Handle redirect result on page load (no-op if no redirect occurred)
-getRedirectResult(auth).catch((err) => {
-  console.warn("Redirect result check:", err.message);
-});
+if (typeof window !== "undefined") {
+  getRedirectResult(auth).catch((err) => {
+    console.warn("Redirect result check:", err.message);
+  });
+}
 
 export const logout = () => signOut(auth);
 

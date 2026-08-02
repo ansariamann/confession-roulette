@@ -1,7 +1,5 @@
 import { NextResponse } from "next/server";
-export const runtime = "edge";
 import { Redis } from "@upstash/redis";
-
 
 let redis;
 

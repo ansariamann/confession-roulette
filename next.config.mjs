@@ -1,8 +1,12 @@
+import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
+
 const nextConfig = {
-  reactStrictMode: false, // Disabled for testing speed
+  reactStrictMode: false,
   devIndicators: {
     buildActivity: false,
   },
 };
 
 export default nextConfig;
+
+initOpenNextCloudflareForDev();

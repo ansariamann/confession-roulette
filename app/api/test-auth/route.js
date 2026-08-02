@@ -2,8 +2,6 @@ import { NextResponse } from "next/server";
 import { getAuth, signInWithEmailAndPassword } from "firebase/auth";
 import { initializeApp } from "firebase/app";
 
-export const runtime = "edge";
-
 export async function GET() {
   try {
     const app = initializeApp({

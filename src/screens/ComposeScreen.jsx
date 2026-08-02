@@ -193,7 +193,16 @@ export default function ComposeScreen() {
           uid: user.uid
         }),
       });
-      const result = await res.json();
+
+      let result;
+      const contentType = res.headers.get("content-type") || "";
+      if (contentType.includes("application/json")) {
+        result = await res.json();
+      } else {
+        const text = await res.text();
+        throw new Error(text || `Server error (${res.status})`);
+      }
+
       if (!res.ok) {
         throw new Error(result.error || "Submission failed");
       }

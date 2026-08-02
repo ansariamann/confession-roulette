@@ -2,8 +2,6 @@ import { NextResponse } from "next/server";
 import { initializeApp, getApps } from "firebase/app";
 import { getFirestore, collection, addDoc } from "firebase/firestore";
 
-export const runtime = "edge";
-
 export async function GET() {
   try {
     const firebaseConfig = {
