@@ -2405,3 +2405,135 @@ body, #root {
 .setting-switch.on .switch-knob {
   transform: translateX(20px);
 }
+/* ── Live gathering (minimal editorial) ─────────────────────── */
+.vlive {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding-top: 8px;
+  animation: vlive-in 500ms var(--ease) both;
+}
+
+@keyframes vlive-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+.vlive-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.vlive-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.vlive-secs {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 40px;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.vlive-secs.urgent { animation: live-blink 1s infinite; }
+
+.vlive-track {
+  height: 1px;
+  background: var(--hairline);
+  overflow: hidden;
+}
+
+.vlive-track-fill {
+  display: block;
+  height: 100%;
+  background: var(--ink);
+  transition: width 500ms linear;
+}
+
+.vlive-text {
+  font-family: var(--font-display);
+  font-size: 28px;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  margin: 12px 0 4px;
+  text-wrap: balance;
+}
+
+/* Instagram-style horizontal reaction line */
+.react-line {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 0;
+  border-top: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.react-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  opacity: 0.32;
+  transition: opacity 200ms var(--ease), transform 200ms var(--ease);
+}
+
+.react-chip.on { opacity: 1; }
+.react-chip.lead { transform: scale(1.12); }
+
+.react-chip-emoji { font-size: 17px; line-height: 1; }
+
+.react-chip-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.react-line-total {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.vlive-comments {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.vlive-comment {
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--ink);
+  padding: 11px 0;
+  border-bottom: 1px solid var(--hairline);
+  animation: vlive-in 300ms var(--ease) both;
+}
+
+.vlive-empty {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 12px 0;
+}
