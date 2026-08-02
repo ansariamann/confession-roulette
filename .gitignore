@@ -29,3 +29,10 @@ server/serviceAccountKey.json
 
 # Environment secrets
 server/.env
+
+# Next.js
+.next
+
+
+.wrangler
+

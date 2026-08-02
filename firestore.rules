@@ -50,16 +50,16 @@ service cloud.firestore {
     // Each auth'd user can write their own heartbeat. Only the server reads.
     match /presence/{uid} {
       allow write: if request.auth != null && request.auth.uid == uid;
-      allow read: if false;
+      allow read: if request.auth != null && request.auth.uid == "admin_bot_uid";
     }
 
     // ── drops ───────────────────────────────────────────────────────────────
     // Clients can read drops where their UID is in the recipient list.
-    // Only the server creates/updates drops.
+    // Edge API creates drops using the bot user.
     match /drops/{docId} {
       allow read: if request.auth != null
                   && (request.auth.uid in resource.data.recipientUids || request.auth.uid == resource.data.authorUid);
-      allow write: if false;
+      allow write, delete: if request.auth != null && request.auth.uid == "admin_bot_uid";
 
       // ── reactions subcollection under drops ──────────────────────────────
       // Clients who are recipients (or the author) of the parent drop can read reaction counts
@@ -73,7 +73,7 @@ service cloud.firestore {
                            .data.recipientUids
                       && request.resource.data.keys().hasOnly(['count'])
                       && request.resource.data.count is int;
-        allow create, delete: if false;
+        allow create, delete: if request.auth != null && request.auth.uid == "admin_bot_uid";
       }
 
       // ── voters subcollection: one-reaction-per-user enforcement ─────────
@@ -90,7 +90,7 @@ service cloud.firestore {
                            .data.recipientUids
                       && request.resource.data.keys().hasAll(['emoji', 'votedAt'])
                       && request.resource.data.emoji is string;
-        allow update, delete: if false;
+        allow update, delete: if request.auth != null && request.auth.uid == "admin_bot_uid";
       }
 
       // ── comments subcollection: anonymous ephemeral comments ────────────
@@ -98,7 +98,7 @@ service cloud.firestore {
       // in the comment doc — comments are fully anonymous and ephemeral.
       match /comments/{commentId} {
         allow read: if request.auth != null
-                    && (request.auth.uid in get(/databases/$(database)/documents/drops/$(docId)).data.recipientUids || request.auth.uid == get(/databases/$(database)/documents/drops/$(docId)).data.authorUid);
+                    && (request.auth.uid == "admin_bot_uid" || request.auth.uid in get(/databases/$(database)/documents/drops/$(docId)).data.recipientUids || request.auth.uid == get(/databases/$(database)/documents/drops/$(docId)).data.authorUid);
         allow create: if request.auth != null
                       && request.auth.uid in
                          get(/databases/$(database)/documents/drops/$(docId))
@@ -106,16 +106,16 @@ service cloud.firestore {
                       && request.resource.data.keys().hasAll(['text', 'createdAt'])
                       && request.resource.data.text is string
                       && request.resource.data.text.size() <= 80;
-        allow update, delete: if false;
+        allow update, delete: if request.auth != null && request.auth.uid == "admin_bot_uid";
       }
     }
 
     // ── verdicts ──────────────────────────────────────────────────────────────
     // Reaction totals only (NO confession text). Readable by auth'd users.
-    // Server (Admin SDK) writes verdicts upon drop expiry.
+    // Edge API writes verdicts upon drop expiry.
     match /verdicts/{dropId} {
       allow read: if request.auth != null;
-      allow write: if false;
+      allow write: if request.auth != null && request.auth.uid == "admin_bot_uid";
     }
 
     // ── hallOfFameStats ──────────────────────────────────────────────────────

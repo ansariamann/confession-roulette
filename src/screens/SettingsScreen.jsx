@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useAuth } from "../context/AuthProvider";
-import { useNavigate } from "react-router-dom";
+import { useRouter } from "next/navigation";
 import CommunityPicker from "../components/CommunityPicker";
 import { useCommunityStats } from "../hooks/useCommunityStats";
 
@@ -26,7 +26,7 @@ const PREFERENCE_TOGGLES = [
 export default function SettingsScreen() {
   const { user, logout, updateCommunity } = useAuth();
   const { stats } = useCommunityStats(user?.communityId);
-  const navigate = useNavigate();
+  const router = useRouter();
   const [changingCommunity, setChangingCommunity] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -79,7 +79,7 @@ export default function SettingsScreen() {
 
   const handleLogout = async () => {
     await logout();
-    navigate("/");
+    router.replace("/");
   };
 
   return (

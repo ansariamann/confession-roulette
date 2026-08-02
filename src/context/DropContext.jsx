@@ -41,6 +41,9 @@ const DropContext = createContext({
   pendingVerdict: null,
   /** Call from VerdictScreen or AutoNav to claim the verdict */
   consumeVerdict: () => {},
+  /** The pending live drop for the author: { id, text, broadcastStartedAt } | null */
+  pendingAuthorDrop: null,
+  consumeAuthorDrop: () => {},
   /** Whether the user is actively typing a confession (has text in the compose box) */
   isComposing: false,
   /** Set by ComposeScreen when the user has text in the textarea */
@@ -58,6 +61,7 @@ export default function DropProvider({ children }) {
   const [pendingDrop, setPendingDrop] = useState(null);
   const [authorVerdicts, setAuthorVerdicts] = useState([]);
   const [pendingVerdict, setPendingVerdict] = useState(null);
+  const [pendingAuthorDrop, setPendingAuthorDrop] = useState(null);
   const [isComposing, setIsComposing] = useState(false);
 
   const seenDropIdsRef = useRef(loadSeenDropIds());
@@ -119,6 +123,49 @@ export default function DropProvider({ children }) {
       (error) => {
         console.error("❌ Drop listener error in DropContext:", error);
       },
+    );
+
+    return () => unsub();
+  }, [user]);
+
+  // ── Global Firestore listener for author LIVE drops ────────────────────────
+  useEffect(() => {
+    if (!user) return;
+
+    const q = query(
+      collection(db, "drops"),
+      where("status", "==", "broadcasting"),
+      where("authorUid", "==", user.uid),
+    );
+
+    const unsub = onSnapshot(
+      q,
+      (snapshot) => {
+        if (snapshot.empty) return;
+        
+        const docSnap = snapshot.docs[0];
+        const data = docSnap.data();
+        const broadcastStartedAt = data.broadcastStartedAt;
+
+        if (!broadcastStartedAt || typeof broadcastStartedAt.toMillis !== "function") {
+          return;
+        }
+
+        const startMs = broadcastStartedAt.toMillis();
+        const elapsed = Date.now() - startMs;
+
+        // If it is still live and we haven't seen it in the static verdicts yet
+        if (elapsed < DROP_DURATION_MS) {
+          setPendingAuthorDrop({
+            id: docSnap.id,
+            text: data.text,
+            broadcastStartedAt: startMs,
+          });
+        }
+      },
+      (error) => {
+        console.error("❌ Author Drop listener error:", error);
+      }
     );
 
     return () => unsub();
@@ -191,6 +238,10 @@ export default function DropProvider({ children }) {
     );
   }
 
+  const consumeAuthorDrop = useCallback(() => {
+    setPendingAuthorDrop(null);
+  }, []);
+
   return (
     <DropContext.Provider
       value={{
@@ -201,6 +252,8 @@ export default function DropProvider({ children }) {
         authorVerdicts,
         pendingVerdict,
         consumeVerdict,
+        pendingAuthorDrop,
+        consumeAuthorDrop,
         isComposing,
         setIsComposing,
       }}

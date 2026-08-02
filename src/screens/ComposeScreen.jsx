@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { doc, setDoc, onSnapshot } from "firebase/firestore";
 import { db, serverTimestamp, auth, API_URL } from "../firebase";
 import { useAuth } from "../context/AuthProvider";
@@ -33,6 +34,7 @@ function saveComposeState(uid, state) {
 }
 
 export default function ComposeScreen() {
+  const router = useRouter();
   const { user } = useAuth();
   const { setIsComposing, pendingVerdict } = useDrop();
   const { playTap, vibrate } = useFeedback();
@@ -165,6 +167,13 @@ export default function ComposeScreen() {
     if (isEmpty || isOverLimit || sending || !user) return;
 
     setSending(true);
+    
+    // OPTIMISTIC UI: Immediately clear text
+    const previousText = text;
+    setText("");
+    playTap();
+    vibrate(30);
+
     try {
       await setDoc(doc(db, "presence", user.uid), {
         lastSeen: serverTimestamp(),
@@ -172,31 +181,31 @@ export default function ComposeScreen() {
       });
 
       const token = await auth.currentUser.getIdToken();
-      const res = await fetch(`${API_URL}/confess`, {
+      const res = await fetch("/api/confess", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          text: text.trim(),
+          text: previousText.trim(),
+          communityId: user.communityId,
+          uid: user.uid
         }),
       });
       const result = await res.json();
       if (!res.ok) {
         throw new Error(result.error || "Submission failed");
       }
-
-      setText("");
-      setQueued(true);
-      setConfessionId(result.confessionId || null);
-      setDropId(result.dropId || null);
-      setRemainingSec(DROP_DURATION_SEC);
-      setDropStatus(result.status === "live" ? "live" : "waiting");
-      playTap();
-      vibrate(30);
+      // Redirect immediately to the VerdictScreen to see live reactions!
+      if (result.dropId) {
+        router.push(`/verdict/${result.dropId}`);
+      }
     } catch (err) {
       console.error("Failed to submit confession:", err);
+      // Revert optimistic UI update on failure
+      setText(previousText);
+      alert(err.message || "Failed to drop confession. Try again.");
     } finally {
       setSending(false);
     }

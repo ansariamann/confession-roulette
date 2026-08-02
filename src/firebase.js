@@ -9,8 +9,8 @@ import { getFirestore, serverTimestamp, doc, setDoc } from "firebase/firestore";
 
 export { serverTimestamp, doc, setDoc };
 
-export const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
-export const WS_URL = import.meta.env.VITE_WS_URL || "ws://localhost:3001";
+export const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://886awm9wzc.execute-api.us-east-1.amazonaws.com/prod";
+export const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "wss://2fhcm11n2d.execute-api.us-east-1.amazonaws.com/prod";
 
 
 const firebaseConfig = {
