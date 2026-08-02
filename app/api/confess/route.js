@@ -5,7 +5,7 @@ import { NextResponse } from "next/server";
 import { ComprehendClient, DetectToxicContentCommand } from "@aws-sdk/client-comprehend";
 import { Client as QStashClient } from "@upstash/qstash";
 import { initializeApp, getApps } from "firebase/app";
-import { getAuth, signInWithEmailAndPassword, inMemoryPersistence, setPersistence } from "firebase/auth";
+import { getAuth, signInWithEmailAndPassword } from "firebase/auth";
 import { getFirestore, collection, addDoc, getDocs, query, where, serverTimestamp, writeBatch, doc } from "firebase/firestore";
 
 export const runtime = "edge";
@@ -77,7 +77,6 @@ export async function POST(req) {
     // 3. Authenticate as Bot User
     console.log("Authenticating bot...");
     if (!auth.currentUser || auth.currentUser.uid !== "admin_bot_uid") {
-      await setPersistence(auth, inMemoryPersistence);
       await signInWithEmailAndPassword(auth, "bot@confessionroulette.com", "super_secret_bot_password");
     }
     console.log("Authenticated bot. Current UID:", auth.currentUser.uid);
