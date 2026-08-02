@@ -3,47 +3,36 @@ if (typeof navigator === "undefined") {
 }
 import { NextResponse } from "next/server";
 import { Redis } from "@upstash/redis";
-import { initializeApp, getApps } from "firebase/app";
-import { getAuth, signInWithEmailAndPassword } from "firebase/auth";
-import { getFirestore, doc, setDoc, deleteDoc, collection, getDocs } from "firebase/firestore";
 
 export const runtime = "edge";
 
-let redis, app, auth, db;
-
-function initServices() {
-  if (redis) return;
-  redis = new Redis({
-    url: process.env.UPSTASH_REDIS_REST_URL || "",
-    token: process.env.UPSTASH_REDIS_REST_TOKEN || "",
-  });
-
-  const firebaseConfig = {
-    apiKey: process.env.VITE_FIREBASE_API_KEY,
-    authDomain: process.env.VITE_FIREBASE_AUTH_DOMAIN,
-    projectId: process.env.VITE_FIREBASE_PROJECT_ID,
-    storageBucket: process.env.VITE_FIREBASE_STORAGE_BUCKET,
-    messagingSenderId: process.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-    appId: process.env.VITE_FIREBASE_APP_ID
-  };
-
-  app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
-  auth = getAuth(app);
-  db = getFirestore(app);
-}
-
 export async function POST(req) {
   try {
-    initServices();
     const { dropId, authorUid, text } = await req.json();
     if (!dropId) return NextResponse.json({ error: "Missing dropId" }, { status: 400 });
 
-    // 1. Authenticate as Bot User
-    if (!auth.currentUser || auth.currentUser.uid !== "admin_bot_uid") {
-      await signInWithEmailAndPassword(auth, "bot@confessionroulette.com", "super_secret_bot_password");
+    const projectId = process.env.VITE_FIREBASE_PROJECT_ID;
+    const apiKey = process.env.VITE_FIREBASE_API_KEY;
+    if (!projectId || !apiKey) {
+      return NextResponse.json({ error: "Server misconfiguration (Firebase)" }, { status: 500 });
     }
 
+    // 1. Authenticate as Bot User (REST)
+    const authRes = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "bot@confessionroulette.com", password: "super_secret_bot_password", returnSecureToken: true })
+    });
+    const authData = await authRes.json();
+    if (!authRes.ok) throw new Error("Bot Auth Failed: " + JSON.stringify(authData));
+    const idToken = authData.idToken;
+
     // 2. Fetch final reactions from Upstash Redis
+    const redis = new Redis({
+      url: process.env.UPSTASH_REDIS_REST_URL || "",
+      token: process.env.UPSTASH_REDIS_REST_TOKEN || "",
+    });
+    
     const reactions = await redis.hgetall(`reactions:${dropId}`) || {};
     const reactionTotals = {};
     for (const [k, v] of Object.entries(reactions)) {
@@ -51,28 +40,62 @@ export async function POST(req) {
     }
     const totalReactions = Object.values(reactionTotals).reduce((a, b) => a + b, 0);
 
-    // 3. Fetch comments from Firestore before deleting
-    const commentsSnap = await getDocs(collection(db, "drops", dropId, "comments"));
+    // 3. Fetch comments from Firestore before deleting (REST)
+    const commentsRes = await fetch(`https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/drops/${dropId}/comments`, {
+      method: "GET",
+      headers: { "Authorization": `Bearer ${idToken}` }
+    });
+    const commentsData = await commentsRes.json();
     const comments = [];
-    commentsSnap.forEach((d) => {
-      comments.push({ id: d.id, ...d.data() });
+    if (commentsData.documents) {
+      commentsData.documents.forEach(doc => {
+        const id = doc.name.split("/").pop();
+        comments.push({ id, text: doc.fields?.text?.stringValue || "", createdAt: doc.fields?.createdAt?.timestampValue || "" });
+      });
+    }
+
+    // 4. Write Verdict (REST)
+    const verdictFields = {
+      dropId: { stringValue: dropId },
+      authorUid: { stringValue: authorUid },
+      text: { stringValue: text },
+      totalReactions: { integerValue: totalReactions },
+      expiredAt: { timestampValue: new Date().toISOString() },
+      reactions: {
+        mapValue: {
+          fields: Object.fromEntries(
+            Object.entries(reactionTotals).map(([k, v]) => [k, { integerValue: v }])
+          )
+        }
+      },
+      comments: {
+        arrayValue: {
+          values: comments.map(c => ({
+            mapValue: {
+              fields: {
+                id: { stringValue: c.id },
+                text: { stringValue: c.text },
+                createdAt: { timestampValue: c.createdAt }
+              }
+            }
+          }))
+        }
+      }
+    };
+
+    await fetch(`https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/verdicts?documentId=${dropId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${idToken}` },
+      body: JSON.stringify({ fields: verdictFields })
     });
 
-    // 4. Write Verdict
-    await setDoc(doc(db, "verdicts", dropId), {
-      dropId,
-      authorUid,
-      text, // Store text so the author can see it in their verdict history
-      reactions: reactionTotals,
-      totalReactions,
-      comments,
-      expiredAt: new Date()
+    // 5. Hard Delete Drop (REST)
+    await fetch(`https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/drops/${dropId}`, {
+      method: "DELETE",
+      headers: { "Authorization": `Bearer ${idToken}` }
     });
 
-    // 5. Hard Delete Drop
-    await deleteDoc(doc(db, "drops", dropId));
-
-    // 6. Cleanup Redis (optional since we set a TTL, but good practice)
+    // 6. Cleanup Redis
     await redis.del(`reactions:${dropId}`, `voters:${dropId}`);
 
     return NextResponse.json({ success: true });

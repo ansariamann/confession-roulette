@@ -2,43 +2,9 @@ if (typeof navigator === "undefined") {
   globalThis.navigator = { userAgent: "Cloudflare-Workers" };
 }
 import { NextResponse } from "next/server";
-import { ComprehendClient, DetectToxicContentCommand } from "@aws-sdk/client-comprehend";
 import { Client as QStashClient } from "@upstash/qstash";
-import { initializeApp, getApps } from "firebase/app";
-import { getAuth, signInWithEmailAndPassword } from "firebase/auth";
-import { getFirestore, collection, addDoc, getDocs, query, where, serverTimestamp, writeBatch, doc } from "firebase/firestore";
 
 export const runtime = "edge";
-
-// Initialize Firebase client SDK for the Edge environment
-let app, auth, db, qstash, comprehend;
-
-function initServices() {
-  if (app) return;
-  const firebaseConfig = {
-    apiKey: process.env.VITE_FIREBASE_API_KEY,
-    authDomain: process.env.VITE_FIREBASE_AUTH_DOMAIN,
-    projectId: process.env.VITE_FIREBASE_PROJECT_ID,
-    storageBucket: process.env.VITE_FIREBASE_STORAGE_BUCKET,
-    messagingSenderId: process.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-    appId: process.env.VITE_FIREBASE_APP_ID
-  };
-
-  app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
-  auth = getAuth(app);
-  db = getFirestore(app);
-  qstash = new QStashClient({ 
-    token: process.env.QSTASH_TOKEN || "",
-    ...(process.env.QSTASH_URL ? { baseUrl: process.env.QSTASH_URL } : {})
-  });
-  comprehend = new ComprehendClient({
-    region: process.env.AWS_REGION || "us-east-1",
-    credentials: {
-      accessKeyId: process.env.AWS_ACCESS_KEY_ID || "",
-      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || "",
-    }
-  });
-}
 
 const PII_PATTERNS = [
   { name: "PII_PHONE", pattern: /(?:\+?\d{1,3}[-.\s]?)?\(?\d{2,5}\)?[-.\s]?\d{3,5}[-.\s]?\d{3,5}\b/ },
@@ -49,7 +15,6 @@ const PII_PATTERNS = [
 
 export async function POST(req) {
   try {
-    initServices();
     const { text, communityId, uid } = await req.json();
     if (!text || !uid) return NextResponse.json({ error: "Missing fields" }, { status: 400 });
 
@@ -60,41 +25,69 @@ export async function POST(req) {
       }
     }
 
-    // 2. AWS Comprehend Check
-    if (!process.env.SKIP_COMPREHEND) {
-      try {
-        const cmd = new DetectToxicContentCommand({ LanguageCode: "en", TextSegments: [{ Text: text }] });
-        const result = await comprehend.send(cmd);
-        const tox = result.ResultList?.[0];
-        if (tox && tox.Toxicity >= 0.5) {
-          return NextResponse.json({ error: "Safety Check Failed (Toxicity)" }, { status: 403 });
-        }
-      } catch (e) {
-        console.warn("Comprehend check failed or unsupported", e);
-      }
+    const projectId = process.env.VITE_FIREBASE_PROJECT_ID;
+    const apiKey = process.env.VITE_FIREBASE_API_KEY;
+    if (!projectId || !apiKey) {
+      return NextResponse.json({ error: "Server misconfiguration (Firebase)" }, { status: 500 });
     }
 
-    // 3. Authenticate as Bot User
-    console.log("Authenticating bot...");
-    if (!auth.currentUser || auth.currentUser.uid !== "admin_bot_uid") {
-      await signInWithEmailAndPassword(auth, "bot@confessionroulette.com", "super_secret_bot_password");
-    }
-    console.log("Authenticated bot. Current UID:", auth.currentUser.uid);
-
-    // 4. Select 100 random active recipients
-    const cutoffDate = new Date(Date.now() - 2 * 60_000);
-    const presenceQ = query(collection(db, "presence"), where("lastSeen", ">", cutoffDate));
-    console.log("Fetching presence...");
-    const presenceSnap = await getDocs(presenceQ);
-    console.log("Fetched presence.");
-    
-    let activeUids = [];
-    presenceSnap.forEach((doc) => {
-      const data = doc.data();
-      if ((data.communityId || "global") === (communityId || "global") && doc.id !== uid) {
-        activeUids.push(doc.id);
-      }
+    // 2. Authenticate as Bot User (REST)
+    console.log("Authenticating bot via REST...");
+    const authRes = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "bot@confessionroulette.com", password: "super_secret_bot_password", returnSecureToken: true })
     });
+    const authData = await authRes.json();
+    if (!authRes.ok) {
+      console.error("Bot Auth Failed:", authData);
+      return NextResponse.json({ error: "Bot Auth Failed" }, { status: 500 });
+    }
+    const idToken = authData.idToken;
+
+    // 3. Select 100 random active recipients (REST)
+    const cutoffDate = new Date(Date.now() - 2 * 60_000);
+    console.log("Fetching presence via REST...");
+    const queryRes = await fetch(`https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents:runQuery`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${idToken}` },
+      body: JSON.stringify({
+        structuredQuery: {
+          from: [{ collectionId: "presence" }],
+          where: {
+            compositeFilter: {
+              op: "AND",
+              filters: [{
+                fieldFilter: {
+                  field: { fieldPath: "lastSeen" },
+                  op: "GREATER_THAN",
+                  value: { timestampValue: cutoffDate.toISOString() }
+                }
+              }]
+            }
+          },
+          limit: 1000
+        }
+      })
+    });
+    
+    const queryData = await queryRes.json();
+    let activeUids = [];
+    
+    // queryData is an array of objects. Document details are in 'document' field.
+    if (Array.isArray(queryData)) {
+      queryData.forEach((row) => {
+        if (row.document) {
+          const docId = row.document.name.split("/").pop();
+          const dataFields = row.document.fields || {};
+          const cId = dataFields.communityId?.stringValue || "global";
+          
+          if (cId === (communityId || "global") && docId !== uid) {
+            activeUids.push(docId);
+          }
+        }
+      });
+    }
 
     // Fisher-Yates shuffle to pick up to 100
     for (let i = activeUids.length - 1; i > 0; i--) {
@@ -103,40 +96,62 @@ export async function POST(req) {
     }
     const recipients = activeUids.slice(0, 100);
 
-    // 5. Create Drop with Edge Secret
-    console.log("Creating drop doc...");
-    const dropDoc = await addDoc(collection(db, "drops"), {
-      authorUid: uid,
-      text,
-      recipientUids: recipients,
-      recipientCount: recipients.length,
-      status: "broadcasting",
-      broadcastStartedAt: serverTimestamp(),
-      edgeSecret: "cf_worker_secret_key"
+    // 4. Create Drop (REST)
+    console.log("Creating drop doc via REST...");
+    const dropRes = await fetch(`https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/drops`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${idToken}` },
+      body: JSON.stringify({
+        fields: {
+          authorUid: { stringValue: uid },
+          text: { stringValue: text },
+          recipientUids: { arrayValue: { values: recipients.map(r => ({ stringValue: r })) } },
+          recipientCount: { integerValue: recipients.length },
+          status: { stringValue: "broadcasting" },
+          broadcastStartedAt: { timestampValue: new Date().toISOString() },
+          edgeSecret: { stringValue: "cf_worker_secret_key" }
+        }
+      })
     });
-    console.log("Drop doc created.", dropDoc.id);
-
-    // 6. Seed reactions
-    console.log("Seeding reactions...");
-    const batch = writeBatch(db);
-    const EMOJIS = ["😂", "💀", "😬", "❤️", "😳"];
-    for (const emoji of EMOJIS) {
-      batch.set(doc(db, "drops", dropDoc.id, "reactions", emoji), { count: 0 });
+    const dropData = await dropRes.json();
+    if (!dropRes.ok) {
+      console.error("Failed to create drop:", dropData);
+      return NextResponse.json({ error: "Failed to create drop" }, { status: 500 });
     }
-    await batch.commit();
+    const dropId = dropData.name.split("/").pop();
+    console.log("Drop doc created.", dropId);
+
+    // 5. Seed reactions (REST)
+    console.log("Seeding reactions via REST...");
+    const EMOJIS = ["😂", "💀", "😬", "❤️", "😳"];
+    const writes = EMOJIS.map(emoji => ({
+      update: {
+        name: `projects/${projectId}/databases/(default)/documents/drops/${dropId}/reactions/${emoji}`,
+        fields: { count: { integerValue: 0 } }
+      }
+    }));
+    await fetch(`https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents:commit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${idToken}` },
+      body: JSON.stringify({ writes })
+    });
     console.log("Reactions seeded.");
 
-    // 7. Schedule Expiry via QStash
+    // 6. Schedule Expiry via QStash
     console.log("Scheduling QStash...");
+    const qstash = new QStashClient({ 
+      token: process.env.QSTASH_TOKEN || "",
+      ...(process.env.QSTASH_URL ? { baseUrl: process.env.QSTASH_URL } : {})
+    });
     const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://your-deployment-url.pages.dev";
     await qstash.publishJSON({
       url: `${baseUrl}/api/expire`,
-      body: { dropId: dropDoc.id, authorUid: uid, text },
+      body: { dropId: dropId, authorUid: uid, text },
       delay: "10s",
     });
     console.log("QStash scheduled.");
 
-    return NextResponse.json({ success: true, dropId: dropDoc.id });
+    return NextResponse.json({ success: true, dropId: dropId });
   } catch (error) {
     console.error("FATAL ERROR IN CONFESS ROUTE:", error);
     return NextResponse.json({ error: error.message || "Internal Server Error" }, { status: 500 });
