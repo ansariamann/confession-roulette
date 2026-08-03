@@ -81,6 +81,13 @@ export default function VerdictScreen() {
   // Use URL dropId first, otherwise fall back to the active author drop
   const effectiveDropId = urlDropId || activeAuthorDropId;
 
+  // If we arrived at the generic /verdict route but have an active live drop, update the URL
+  useEffect(() => {
+    if (!urlDropId && activeAuthorDropId) {
+      router.replace(`/verdict/${activeAuthorDropId}`);
+    }
+  }, [urlDropId, activeAuthorDropId, router]);
+
   const [urlVerdict, setUrlVerdict] = useState(null);
   const [loading, setLoading] = useState(!!effectiveDropId && authorVerdicts.length === 0);
   const [error, setError] = useState(null);

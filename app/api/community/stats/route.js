@@ -50,14 +50,37 @@ export async function GET(req) {
       Authorization: `Bearer ${botToken}`,
     };
 
-    // Read community doc for member count
+    // Query community doc by nameLower
     let memberCount = 0;
-    const commRes = await fetch(`${BASE}/communities/${communityName}`, { headers });
-    if (commRes.ok) {
-      const commDoc = await commRes.json();
-      memberCount = commDoc.fields?.memberCount?.integerValue
-        ? parseInt(commDoc.fields.memberCount.integerValue, 10)
-        : 0;
+    const queryRes = await fetch(
+      `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents:runQuery`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          structuredQuery: {
+            from: [{ collectionId: "communities" }],
+            where: {
+              fieldFilter: {
+                field: { fieldPath: "nameLower" },
+                op: "EQUAL",
+                value: { stringValue: communityName.toLowerCase() },
+              },
+            },
+            limit: 1,
+          },
+        }),
+      }
+    );
+    
+    if (queryRes.ok) {
+      const queryData = await queryRes.json();
+      if (Array.isArray(queryData) && queryData[0]?.document) {
+        const commDoc = queryData[0].document;
+        memberCount = commDoc.fields?.memberCount?.integerValue
+          ? parseInt(commDoc.fields.memberCount.integerValue, 10)
+          : 0;
+      }
     }
 
     // Count active users (presence in last 2 min)

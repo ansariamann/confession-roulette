@@ -75,15 +75,44 @@ export async function POST(req) {
     };
 
     // ── 4. Upsert community doc ─────────────────────────────────────────────
-    // Read existing doc first so we can increment memberCount correctly
-    const commDocRes = await fetch(`${BASE}/communities/${communityId}`, { headers });
     let currentMemberCount = 0;
+    let targetDocPath = `${BASE}/communities/${encodeURIComponent(communityId)}`;
+    let targetCommunityName = rawName;
+    let isExistingCommunity = false;
 
-    if (commDocRes.ok) {
-      const commDoc = await commDocRes.json();
-      currentMemberCount = commDoc.fields?.memberCount?.integerValue
-        ? parseInt(commDoc.fields.memberCount.integerValue, 10)
-        : 0;
+    // Find existing community by nameLower
+    const queryRes = await fetch(
+      `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents:runQuery`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          structuredQuery: {
+            from: [{ collectionId: "communities" }],
+            where: {
+              fieldFilter: {
+                field: { fieldPath: "nameLower" },
+                op: "EQUAL",
+                value: { stringValue: communityNameLower },
+              },
+            },
+            limit: 1,
+          },
+        }),
+      }
+    );
+
+    if (queryRes.ok) {
+      const queryData = await queryRes.json();
+      if (Array.isArray(queryData) && queryData[0]?.document) {
+        const commDoc = queryData[0].document;
+        isExistingCommunity = true;
+        targetDocPath = `https://firestore.googleapis.com/v1/${commDoc.name}`;
+        targetCommunityName = commDoc.fields?.name?.stringValue || rawName;
+        currentMemberCount = commDoc.fields?.memberCount?.integerValue
+          ? parseInt(commDoc.fields.memberCount.integerValue, 10)
+          : 0;
+      }
     }
 
     // Read current user doc to see if they're changing communities
@@ -95,49 +124,86 @@ export async function POST(req) {
     }
 
     // If switching, we need to decrement old community's count
-    if (previousCommunityId && previousCommunityId !== communityId) {
-      const oldCommRes = await fetch(`${BASE}/communities/${previousCommunityId}`, { headers });
-      if (oldCommRes.ok) {
-        const oldComm = await oldCommRes.json();
-        const oldCount = oldComm.fields?.memberCount?.integerValue
-          ? parseInt(oldComm.fields.memberCount.integerValue, 10)
-          : 1;
-        await fetch(`${BASE}/communities/${previousCommunityId}`, {
-          method: "PATCH",
+    if (previousCommunityId && previousCommunityId.toLowerCase() !== communityNameLower) {
+      const oldQueryRes = await fetch(
+        `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents:runQuery`,
+        {
+          method: "POST",
           headers,
           body: JSON.stringify({
-            fields: {
-              memberCount: { integerValue: Math.max(0, oldCount - 1) },
+            structuredQuery: {
+              from: [{ collectionId: "communities" }],
+              where: {
+                fieldFilter: {
+                  field: { fieldPath: "nameLower" },
+                  op: "EQUAL",
+                  value: { stringValue: previousCommunityId.toLowerCase() },
+                },
+              },
+              limit: 1,
             },
           }),
-        });
+        }
+      );
+      if (oldQueryRes.ok) {
+        const oldQueryData = await oldQueryRes.json();
+        if (Array.isArray(oldQueryData) && oldQueryData[0]?.document) {
+          const oldDoc = oldQueryData[0].document;
+          const oldDocPath = `https://firestore.googleapis.com/v1/${oldDoc.name}`;
+          const oldCount = oldDoc.fields?.memberCount?.integerValue
+            ? parseInt(oldDoc.fields.memberCount.integerValue, 10)
+            : 1;
+          
+          await fetch(`${oldDocPath}?updateMask.fieldPaths=memberCount`, {
+            method: "PATCH",
+            headers,
+            body: JSON.stringify({
+              fields: {
+                memberCount: { integerValue: Math.max(0, oldCount - 1) },
+              },
+            }),
+          });
+        }
       }
     }
 
-    const isNewMember = previousCommunityId !== communityId;
+    const isNewMember = !previousCommunityId || previousCommunityId.toLowerCase() !== communityNameLower;
     const newMemberCount = isNewMember ? currentMemberCount + 1 : currentMemberCount;
 
     // Upsert community doc
-    await fetch(`${BASE}/communities/${communityId}`, {
-      method: "PATCH",
-      headers,
-      body: JSON.stringify({
-        fields: {
-          name:        { stringValue: communityId },
-          nameLower:   { stringValue: communityNameLower },
-          memberCount: { integerValue: newMemberCount },
-          createdAt:   { timestampValue: new Date().toISOString() },
-        },
-      }),
-    });
+    if (isExistingCommunity) {
+      await fetch(`${targetDocPath}?updateMask.fieldPaths=memberCount`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({
+          fields: {
+            memberCount: { integerValue: newMemberCount },
+          },
+        }),
+      });
+    } else {
+      await fetch(targetDocPath, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({
+          fields: {
+            name:        { stringValue: targetCommunityName },
+            nameLower:   { stringValue: communityNameLower },
+            memberCount: { integerValue: newMemberCount },
+            createdAt:   { timestampValue: new Date().toISOString() },
+            type:        { stringValue: "general" },
+          },
+        }),
+      });
+    }
 
     // ── 5. Update user doc ─────────────────────────────────────────────────
-    await fetch(`${BASE}/users/${uid}`, {
+    await fetch(`${BASE}/users/${uid}?updateMask.fieldPaths=communityId`, {
       method: "PATCH",
       headers,
       body: JSON.stringify({
         fields: {
-          communityId: { stringValue: communityId },
+          communityId: { stringValue: targetCommunityName },
         },
       }),
     });
@@ -167,7 +233,7 @@ export async function POST(req) {
                     fieldFilter: {
                       field: { fieldPath: "communityId" },
                       op: "EQUAL",
-                      value: { stringValue: communityId },
+                      value: { stringValue: targetCommunityName },
                     },
                   },
                 ],
@@ -184,7 +250,7 @@ export async function POST(req) {
       : 0;
 
     return NextResponse.json({
-      communityId,
+      communityId: targetCommunityName,
       memberCount: newMemberCount,
       activeCount,
     });
