@@ -13,10 +13,10 @@ import { db, auth, API_URL } from "../firebase";
 import { useAuth } from "../context/AuthProvider";
 import { useDrop } from "../context/DropContext";
 import useFeedback from "../hooks/useFeedback";
-import { DROP_DURATION_MS } from "../constants";
+import { REACTION_WINDOW_MS } from "../constants";
 
 const EMOJIS = ["😂", "💀", "😬", "❤️", "😳"];
-const USER_VIEW_DURATION_MS = DROP_DURATION_MS;
+const USER_VIEW_DURATION_MS = REACTION_WINDOW_MS;
 const COUNTDOWN_TICK_MS = 500;
 const MAX_COMMENT_LENGTH = 80;
 const EXPIRED_DROPS_KEY = "expired-drop-ids";
@@ -342,9 +342,6 @@ export default function LiveDropScreen() {
         <span className="stage-quote" aria-hidden="true">"</span>
         <p className="stage-text">{currentDrop.text}</p>
         <div className="stage-foot">
-          <span className="stage-count">
-            {totalVotes > 0 ? `${totalVotes} reacted` : "Be the first to react"}
-          </span>
           <button
             className={`report-btn${isReported ? " reported" : ""}`}
             onClick={handleReport}

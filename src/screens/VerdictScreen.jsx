@@ -68,23 +68,21 @@ function EmojiStrip({ reactions, dominant, isLive }) {
           </div>
         );
       })}
-      {total > 0 && (
-        <div className="emoji-pill emoji-pill-total">
-          <span className="emoji-pill-count">{total} total</span>
-        </div>
-      )}
     </div>
   );
 }
 
 export default function VerdictScreen() {
-  const { dropId } = useParams();
+  const { dropId: urlDropId } = useParams();
   const router = useRouter();
   const { user } = useAuth();
-  const { authorVerdicts } = useDrop();
+  const { authorVerdicts, activeAuthorDropId } = useDrop();
+
+  // Use URL dropId first, otherwise fall back to the active author drop
+  const effectiveDropId = urlDropId || activeAuthorDropId;
 
   const [urlVerdict, setUrlVerdict] = useState(null);
-  const [loading, setLoading] = useState(!!dropId && authorVerdicts.length === 0);
+  const [loading, setLoading] = useState(!!effectiveDropId && authorVerdicts.length === 0);
   const [error, setError] = useState(null);
 
   const [isLive, setIsLive] = useState(false);
@@ -99,12 +97,12 @@ export default function VerdictScreen() {
 
   // ── 1. Live Drop Listener ─────────────────────────────────────────────────
   useEffect(() => {
-    if (!dropId || !user) return;
+    if (!effectiveDropId || !user) return;
     let pollInterval = null;
     let countdownInterval = null;
     let unsubComments = () => {};
 
-    const unsubDrop = onSnapshot(doc(db, "drops", dropId), (snapshot) => {
+    const unsubDrop = onSnapshot(doc(db, "drops", effectiveDropId), (snapshot) => {
       if (snapshot.exists() && snapshot.data().status === "broadcasting") {
         setIsLive(true);
         setLoading(false);
@@ -116,7 +114,11 @@ export default function VerdictScreen() {
           if (!countdownInterval) {
             const tick = () => {
               const elapsed = Date.now() - startMs;
-              setUserRemainingMs(Math.max(0, DROP_DURATION_MS - elapsed));
+              const remaining = Math.max(0, DROP_DURATION_MS - elapsed);
+              setUserRemainingMs(remaining);
+              if (remaining <= 0) {
+                setIsLive(false);
+              }
             };
             tick();
             countdownInterval = setInterval(tick, 500);
@@ -126,7 +128,7 @@ export default function VerdictScreen() {
         if (!pollInterval) {
           const poll = async () => {
             try {
-              const res = await fetch(`/api/react?dropId=${dropId}`, { cache: "no-store" });
+              const res = await fetch(`/api/react?dropId=${effectiveDropId}`, { cache: "no-store" });
               if (res.ok) {
                 const rData = await res.json();
                 const counts = {};
@@ -141,7 +143,7 @@ export default function VerdictScreen() {
           pollInterval = setInterval(poll, 800);
 
           const commentsQuery = query(
-            collection(db, "drops", dropId, "comments"),
+            collection(db, "drops", effectiveDropId, "comments"),
             orderBy("createdAt", "asc")
           );
           unsubComments = onSnapshot(commentsQuery, (cSnap) => {
@@ -162,15 +164,15 @@ export default function VerdictScreen() {
       if (countdownInterval) clearInterval(countdownInterval);
       if (pollInterval) clearInterval(pollInterval);
     };
-  }, [dropId, user]);
+  }, [effectiveDropId, user]);
 
   // ── 2. Static Verdict Listener ───────────────────────────────────────────
   useEffect(() => {
-    if (!dropId || !user || isLive) return;
-    const existing = authorVerdicts.find((v) => v.id === dropId);
+    if (!effectiveDropId || !user || isLive) return;
+    const existing = authorVerdicts.find((v) => v.id === effectiveDropId);
     if (existing) { setUrlVerdict(existing); setLoading(false); return; }
 
-    const unsubscribe = onSnapshot(doc(db, "verdicts", dropId), (snapshot) => {
+    const unsubscribe = onSnapshot(doc(db, "verdicts", effectiveDropId), (snapshot) => {
       if (snapshot.exists()) {
         setUrlVerdict({ id: snapshot.id, ...snapshot.data() });
         setLoading(false);
@@ -189,7 +191,7 @@ export default function VerdictScreen() {
     }, 15_000);
 
     return () => { unsubscribe(); clearTimeout(timeout); };
-  }, [dropId, user, isLive, authorVerdicts]);
+  }, [effectiveDropId, user, isLive, authorVerdicts]);
 
   // ── Data Resolution ───────────────────────────────────────────────────────
   const verdictsList = authorVerdicts.length > 0 ? authorVerdicts : urlVerdict ? [urlVerdict] : [];
@@ -248,7 +250,7 @@ export default function VerdictScreen() {
   const isUrgent = userSeconds <= 5;
 
   // ── RENDER: Empty ─────────────────────────────────────────────────────────
-  if (!dropId && verdictsList.length === 0 && !isLive) {
+  if (!effectiveDropId && verdictsList.length === 0 && !isLive) {
     return (
       <div className="screen" id="verdict-screen">
         <div className="vrd-empty">

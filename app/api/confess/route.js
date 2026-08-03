@@ -142,7 +142,7 @@ export async function POST(req) {
         headers: {
           "Authorization": `Bearer ${qstashToken}`,
           "Content-Type": "application/json",
-          "Upstash-Delay": "10s"
+          "Upstash-Delay": "60s"
         },
         body: JSON.stringify({ dropId: dropId, authorUid: uid, text })
       });

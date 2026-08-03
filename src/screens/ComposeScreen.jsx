@@ -171,8 +171,6 @@ export default function ComposeScreen() {
     // OPTIMISTIC UI: Immediately clear text
     const previousText = text;
     setText("");
-    playTap();
-    vibrate(30);
 
     try {
       await setDoc(doc(db, "presence", user.uid), {
@@ -206,6 +204,9 @@ export default function ComposeScreen() {
       if (!res.ok) {
         throw new Error(result.error || "Submission failed");
       }
+      // Sound + haptic AFTER success, before redirect
+      playTap();
+      vibrate(30);
       // Redirect immediately to the VerdictScreen to see live reactions!
       if (result.dropId) {
         router.push(`/verdict/${result.dropId}`);

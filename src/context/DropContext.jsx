@@ -62,6 +62,7 @@ export default function DropProvider({ children }) {
   const [authorVerdicts, setAuthorVerdicts] = useState([]);
   const [pendingVerdict, setPendingVerdict] = useState(null);
   const [pendingAuthorDrop, setPendingAuthorDrop] = useState(null);
+  const [activeAuthorDropId, setActiveAuthorDropId] = useState(null);
   const [isComposing, setIsComposing] = useState(false);
 
   const seenDropIdsRef = useRef(loadSeenDropIds());
@@ -141,7 +142,10 @@ export default function DropProvider({ children }) {
     const unsub = onSnapshot(
       q,
       (snapshot) => {
-        if (snapshot.empty) return;
+        if (snapshot.empty) {
+          setActiveAuthorDropId(null);
+          return;
+        }
         
         const docSnap = snapshot.docs[0];
         const data = docSnap.data();
@@ -156,11 +160,14 @@ export default function DropProvider({ children }) {
 
         // If it is still live and we haven't seen it in the static verdicts yet
         if (elapsed < DROP_DURATION_MS) {
+          setActiveAuthorDropId(docSnap.id);
           setPendingAuthorDrop({
             id: docSnap.id,
             text: data.text,
             broadcastStartedAt: startMs,
           });
+        } else {
+          setActiveAuthorDropId(null);
         }
       },
       (error) => {
@@ -254,6 +261,7 @@ export default function DropProvider({ children }) {
         consumeVerdict,
         pendingAuthorDrop,
         consumeAuthorDrop,
+        activeAuthorDropId,
         isComposing,
         setIsComposing,
       }}
