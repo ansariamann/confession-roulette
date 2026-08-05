@@ -202,6 +202,19 @@ export default function ComposeScreen() {
       }
 
       if (!res.ok) {
+        // Special case: self-harm content detected.
+        // Don't show a generic "rejected" error — show crisis resources instead.
+        if (res.status === 422 && result.error === "SELF_HARM") {
+          setText(previousText); // restore text
+          alert(
+            "It sounds like you might be going through something difficult. " +
+            "If you're struggling, please reach out:\n\n" +
+            "📞 988 Suicide & Crisis Lifeline — call or text 988\n" +
+            "💬 Crisis Text Line — text HOME to 741741\n\n" +
+            "You don't have to go through this alone. 💙"
+          );
+          return;
+        }
         throw new Error(result.error || "Submission failed");
       }
       // Sound + haptic AFTER success, before redirect

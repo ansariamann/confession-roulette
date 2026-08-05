@@ -9,8 +9,7 @@ import { getFirestore, serverTimestamp, doc, setDoc } from "firebase/firestore";
 
 export { serverTimestamp, doc, setDoc };
 
-export const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://886awm9wzc.execute-api.us-east-1.amazonaws.com/prod";
-export const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "wss://2fhcm11n2d.execute-api.us-east-1.amazonaws.com/prod";
+
 
 const firebaseConfig = {
   apiKey: "AIzaSyCn1M6nfNHC1hdky-egJVN6dFYo6xkxKRo",

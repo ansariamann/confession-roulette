@@ -1,159 +1,347 @@
-import { NextResponse } from "next/server";
+// ─── POST /api/confess ────────────────────────────────────────────────────────
+// Handles the full confession submission flow:
+//  1. Auth verification (user's own Firebase ID token)
+//  2. PII + NLP moderation (BLOCKING — drop never created if this fails)
+//  3. Frozen account check
+//  4. Rate limit check (max 3 confessions / 5 minutes)
+//  5. Scale-safe audience selection via sortKey pivot sampling
+//  6. Drop document creation in Firestore
+//  7. Reaction sub-doc seeding (Firestore, not Redis)
+//  8. Expiry scheduling via QStash (T+60s → /api/expire)
+// ─────────────────────────────────────────────────────────────────────────────
 
-const PII_PATTERNS = [
-  { name: "PII_PHONE", pattern: /(?:\+?\d{1,3}[-.\s]?)?\(?\d{2,5}\)?[-.\s]?\d{3,5}[-.\s]?\d{3,5}\b/ },
-  { name: "PII_EMAIL", pattern: /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/ },
-  { name: "PII_ADDRESS", pattern: /\b\d{1,5}\s+[A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*\s+(?:St(?:reet)?|Ave(?:nue)?|Blvd|Boulevard|Dr(?:ive)?|Ln|Lane|Rd|Road|Way|Ct|Court|Pl(?:ace)?|Cir(?:cle)?|Terr(?:ace)?|Pike|Hwy|Highway)\b/i },
-  { name: "PII_SOCIAL", pattern: /(?:^|\s)@[a-zA-Z_]\w{2,29}(?!\.\w)/m }
-];
+import { NextResponse } from "next/server";
+import { getAdminToken, verifyIdToken, firestoreBase } from "../_lib/adminToken";
+import { moderateText } from "../_lib/moderation";
+
+const DROP_DURATION_S = 60;
+const DROP_RECIPIENT_COUNT = 100;
+const RATE_LIMIT_WINDOW_MS = 5 * 60_000; // 5 minutes
+const RATE_LIMIT_MAX = 3;
+const EMOJIS = ["😂", "💀", "😬", "❤️", "😳"];
+
+/**
+ * Scale-safe audience selection using sortKey pivot sampling.
+ *
+ * Each presence doc has a random float sortKey in [0, 1) written at heartbeat time.
+ * We generate a random pivot and query two ranges to wrap around the circle.
+ * This gives a uniform random sample from any size pool in exactly 2 Firestore queries,
+ * each returning at most `count` documents.
+ *
+ * Scales to millions of users with no in-memory shuffle.
+ */
+async function selectRecipients(communityId, authorUid, count, adminToken) {
+  const projectId = process.env.VITE_FIREBASE_PROJECT_ID;
+  const BASE_QUERY = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents:runQuery`;
+  const headers = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${adminToken}`,
+  };
+
+  const pivot = Math.random();
+  const cutoff = new Date(Date.now() - 2 * 60_000).toISOString();
+
+  // Build the Firestore community filter — if no communityId, query all active users
+  const communityFilter = communityId
+    ? {
+        fieldFilter: {
+          field: { fieldPath: "communityId" },
+          op: "EQUAL",
+          value: { stringValue: communityId },
+        },
+      }
+    : null;
+
+  const activeFilter = {
+    fieldFilter: {
+      field: { fieldPath: "lastSeen" },
+      op: "GREATER_THAN",
+      value: { timestampValue: cutoff },
+    },
+  };
+
+  function buildQuery(pivotValue, op, remaining) {
+    const filters = [
+      activeFilter,
+      {
+        fieldFilter: {
+          field: { fieldPath: "sortKey" },
+          op,
+          value: { doubleValue: pivotValue },
+        },
+      },
+    ];
+    if (communityFilter) filters.push(communityFilter);
+
+    return {
+      structuredQuery: {
+        from: [{ collectionId: "presence" }],
+        where: { compositeFilter: { op: "AND", filters } },
+        orderBy: [{ field: { fieldPath: "sortKey" }, direction: op === "GREATER_THAN_OR_EQUAL" ? "ASCENDING" : "ASCENDING" }],
+        limit: remaining,
+      },
+    };
+  }
+
+  const extractUids = (rows) =>
+    (Array.isArray(rows) ? rows : [])
+      .filter((r) => r.document)
+      .map((r) => r.document.name.split("/").pop())
+      .filter((uid) => uid !== authorUid);
+
+  // First pass: sortKey >= pivot (ascending)
+  const res1 = await fetch(BASE_QUERY, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(buildQuery(pivot, "GREATER_THAN_OR_EQUAL", count)),
+  });
+  const data1 = await res1.json();
+  const firstBatch = extractUids(data1);
+
+  let recipients = firstBatch;
+
+  // Wrap-around: if we didn't get enough, query from the beginning [0, pivot)
+  if (recipients.length < count) {
+    const remaining = count - recipients.length;
+    const res2 = await fetch(BASE_QUERY, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(buildQuery(pivot, "LESS_THAN", remaining)),
+    });
+    const data2 = await res2.json();
+    recipients = [...recipients, ...extractUids(data2)];
+  }
+
+  // Deduplicate (shouldn't happen, but be safe)
+  return [...new Set(recipients)].slice(0, count);
+}
 
 export async function POST(req) {
   try {
-    const { text, communityId, uid } = await req.json();
-    if (!text || !uid) return NextResponse.json({ error: "Missing fields" }, { status: 400 });
+    // ── 1. Auth — verify the user's own token ──────────────────────────────
+    const authHeader = req.headers.get("authorization") || "";
+    const idToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+    if (!idToken) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
-    // 1. PII Check
-    for (const { name, pattern } of PII_PATTERNS) {
-      if (pattern.test(text)) {
-        return NextResponse.json({ error: "Safety Check Failed (PII)" }, { status: 403 });
+    let uid;
+    try {
+      uid = await verifyIdToken(idToken);
+    } catch {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const { text, communityId } = await req.json();
+    if (!text || typeof text !== "string" || text.trim().length === 0) {
+      return NextResponse.json({ error: "Missing confession text" }, { status: 400 });
+    }
+
+    const trimmedText = text.trim();
+    if (trimmedText.length > 280) {
+      return NextResponse.json({ error: "Confession too long (max 280 characters)" }, { status: 400 });
+    }
+
+    // ── 2. Moderation gate (BLOCKING — must pass before any drop is created) ──
+    const modResult = await moderateText(trimmedText, false /* isSpicier */);
+
+    if (!modResult.passed) {
+      // Special case: self-harm content — don't silently reject, signal the client
+      // so it can show crisis resources instead of a generic error.
+      if (modResult.selfHarm) {
+        return NextResponse.json(
+          {
+            error: "SELF_HARM",
+            message:
+              "It sounds like you might be going through something really hard. " +
+              "Please reach out for support.",
+            crisisLine: "https://988lifeline.org",
+          },
+          { status: 422 }
+        );
+      }
+
+      return NextResponse.json(
+        { error: "Content did not pass safety check", reason: modResult.reason },
+        { status: 403 }
+      );
+    }
+
+    // ── 3. Get admin token for all subsequent Firestore operations ──────────
+    const adminToken = await getAdminToken();
+    const BASE = firestoreBase();
+    const adminHeaders = {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${adminToken}`,
+    };
+
+    // ── 4. Frozen account check ────────────────────────────────────────────
+    const userRes = await fetch(`${BASE}/users/${uid}`, { headers: adminHeaders });
+    if (userRes.ok) {
+      const userDoc = await userRes.json();
+      if (userDoc.fields?.isFrozen?.booleanValue === true) {
+        return NextResponse.json(
+          { error: "Your account is frozen due to multiple reports." },
+          { status: 403 }
+        );
       }
     }
 
-    const projectId = process.env.VITE_FIREBASE_PROJECT_ID;
-    const apiKey = process.env.VITE_FIREBASE_API_KEY;
-    if (!projectId || !apiKey) {
-      return NextResponse.json({ error: "Server misconfiguration (Firebase)" }, { status: 500 });
-    }
-
-    // 2. Authenticate as Bot User (REST)
-    console.log("Authenticating bot via REST...");
-    const authRes = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: "bot@confessionroulette.com", password: "super_secret_bot_password", returnSecureToken: true })
-    });
-    const authData = await authRes.json();
-    if (!authRes.ok) {
-      console.error("Bot Auth Failed:", authData);
-      return NextResponse.json({ error: "Bot Auth Failed" }, { status: 500 });
-    }
-    const idToken = authData.idToken;
-
-    // 3. Select 100 random active recipients (REST)
-    const cutoffDate = new Date(Date.now() - 2 * 60_000);
-    console.log("Fetching presence via REST...");
-    const queryRes = await fetch(`https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents:runQuery`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${idToken}` },
-      body: JSON.stringify({
-        structuredQuery: {
-          from: [{ collectionId: "presence" }],
-          where: {
-            compositeFilter: {
-              op: "AND",
-              filters: [{
-                fieldFilter: {
-                  field: { fieldPath: "lastSeen" },
-                  op: "GREATER_THAN",
-                  value: { timestampValue: cutoffDate.toISOString() }
-                }
-              }]
-            }
+    // ── 5. Rate limit check (max 3 per 5 minutes) ─────────────────────────
+    const windowStart = new Date(Date.now() - RATE_LIMIT_WINDOW_MS).toISOString();
+    const rateLimitRes = await fetch(
+      `https://firestore.googleapis.com/v1/projects/${process.env.VITE_FIREBASE_PROJECT_ID}/databases/(default)/documents:runQuery`,
+      {
+        method: "POST",
+        headers: adminHeaders,
+        body: JSON.stringify({
+          structuredQuery: {
+            from: [{ collectionId: "drops" }],
+            where: {
+              compositeFilter: {
+                op: "AND",
+                filters: [
+                  {
+                    fieldFilter: {
+                      field: { fieldPath: "authorUid" },
+                      op: "EQUAL",
+                      value: { stringValue: uid },
+                    },
+                  },
+                  {
+                    fieldFilter: {
+                      field: { fieldPath: "broadcastStartedAt" },
+                      op: "GREATER_THAN",
+                      value: { timestampValue: windowStart },
+                    },
+                  },
+                ],
+              },
+            },
+            limit: RATE_LIMIT_MAX,
           },
-          limit: 1000
-        }
-      })
-    });
-    
-    const queryData = await queryRes.json();
-    let activeUids = [];
-    
-    // queryData is an array of objects. Document details are in 'document' field.
-    if (Array.isArray(queryData)) {
-      queryData.forEach((row) => {
-        if (row.document) {
-          const docId = row.document.name.split("/").pop();
-          const dataFields = row.document.fields || {};
-          const cId = dataFields.communityId?.stringValue || "global";
-          
-          if (cId === (communityId || "global") && docId !== uid) {
-            activeUids.push(docId);
-          }
-        }
-      });
+        }),
+      }
+    );
+
+    if (rateLimitRes.ok) {
+      const rateLimitData = await rateLimitRes.json();
+      const recentCount = Array.isArray(rateLimitData)
+        ? rateLimitData.filter((r) => r.document).length
+        : 0;
+      if (recentCount >= RATE_LIMIT_MAX) {
+        return NextResponse.json(
+          { error: "Rate limit exceeded. Max 3 confessions per 5 minutes." },
+          { status: 429 }
+        );
+      }
     }
 
-    // Fisher-Yates shuffle to pick up to 100
-    for (let i = activeUids.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [activeUids[i], activeUids[j]] = [activeUids[j], activeUids[i]];
-    }
-    const recipients = activeUids.slice(0, 100);
+    // ── 6. Update presence heartbeat + sortKey ─────────────────────────────
+    // sortKey is a random float used for scale-safe pivot sampling.
+    await fetch(
+      `${BASE}/presence/${uid}?updateMask.fieldPaths=lastSeen&updateMask.fieldPaths=communityId&updateMask.fieldPaths=sortKey`,
+      {
+        method: "PATCH",
+        headers: adminHeaders,
+        body: JSON.stringify({
+          fields: {
+            lastSeen: { timestampValue: new Date().toISOString() },
+            ...(communityId ? { communityId: { stringValue: communityId } } : {}),
+            sortKey: { doubleValue: Math.random() },
+          },
+        }),
+      }
+    );
 
-    // 4. Create Drop (REST)
-    console.log("Creating drop doc via REST...");
-    const dropRes = await fetch(`https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/drops`, {
+    // ── 7. Scale-safe audience selection ───────────────────────────────────
+    const recipients = await selectRecipients(
+      communityId || null,
+      uid,
+      DROP_RECIPIENT_COUNT,
+      adminToken
+    );
+
+    if (recipients.length === 0) {
+      // No active users — still create the drop but with empty recipient list
+      // The author can see their own confession via the verdict screen.
+      console.log(`No active recipients for community "${communityId}" — proceeding with empty audience.`);
+    }
+
+    // ── 8. Create the drop document ────────────────────────────────────────
+    const dropRes = await fetch(`${BASE}/drops`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${idToken}` },
+      headers: adminHeaders,
       body: JSON.stringify({
         fields: {
           authorUid: { stringValue: uid },
-          text: { stringValue: text },
-          recipientUids: { arrayValue: { values: recipients.map(r => ({ stringValue: r })) } },
+          text: { stringValue: trimmedText },
+          communityId: { stringValue: communityId || "global" },
+          recipientUids: {
+            arrayValue: { values: recipients.map((r) => ({ stringValue: r })) },
+          },
           recipientCount: { integerValue: recipients.length },
           status: { stringValue: "broadcasting" },
           broadcastStartedAt: { timestampValue: new Date().toISOString() },
-          edgeSecret: { stringValue: "cf_worker_secret_key" }
-        }
-      })
+        },
+      }),
     });
-    const dropData = await dropRes.json();
+
     if (!dropRes.ok) {
-      console.error("Failed to create drop:", dropData);
+      const err = await dropRes.json();
+      console.error("Failed to create drop:", err);
       return NextResponse.json({ error: "Failed to create drop" }, { status: 500 });
     }
+
+    const dropData = await dropRes.json();
     const dropId = dropData.name.split("/").pop();
-    console.log("Drop doc created.", dropId);
 
-    // 5. Seed reactions (REST)
-    console.log("Seeding reactions via REST...");
-    const EMOJIS = ["😂", "💀", "😬", "❤️", "😳"];
-    const writes = EMOJIS.map(emoji => ({
+    // ── 9. Seed reaction sub-documents in Firestore ────────────────────────
+    // Using commit (batch write) for atomicity
+    const reactionWrites = EMOJIS.map((emoji) => ({
       update: {
-        name: `projects/${projectId}/databases/(default)/documents/drops/${dropId}/reactions/${emoji}`,
-        fields: { count: { integerValue: 0 } }
-      }
+        name: `projects/${process.env.VITE_FIREBASE_PROJECT_ID}/databases/(default)/documents/drops/${dropId}/reactions/${emoji}`,
+        fields: { count: { integerValue: 0 } },
+      },
     }));
-    await fetch(`https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents:commit`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${idToken}` },
-      body: JSON.stringify({ writes })
-    });
-    console.log("Reactions seeded.");
 
-    // 6. Schedule Expiry via QStash (REST)
-    console.log("Scheduling QStash via REST...");
-    const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://your-deployment-url.pages.dev";
+    await fetch(
+      `https://firestore.googleapis.com/v1/projects/${process.env.VITE_FIREBASE_PROJECT_ID}/databases/(default)/documents:commit`,
+      {
+        method: "POST",
+        headers: adminHeaders,
+        body: JSON.stringify({ writes: reactionWrites }),
+      }
+    );
+
+    // ── 10. Schedule expiry via QStash (T+60s → /api/expire) ───────────────
+    const baseUrl =
+      process.env.NEXT_PUBLIC_SITE_URL ||
+      "https://confession-roulette.iamamanansari786a.workers.dev";
     const qstashToken = process.env.QSTASH_TOKEN || "";
-    
+
     if (qstashToken) {
       await fetch(`https://qstash.upstash.io/v2/publish/${baseUrl}/api/expire`, {
         method: "POST",
         headers: {
-          "Authorization": `Bearer ${qstashToken}`,
+          Authorization: `Bearer ${qstashToken}`,
           "Content-Type": "application/json",
-          "Upstash-Delay": "60s"
+          "Upstash-Delay": `${DROP_DURATION_S}s`,
+          // Idempotency key prevents duplicate expiry if QStash retries
+          "Upstash-Deduplication-Id": `expire-${dropId}`,
         },
-        body: JSON.stringify({ dropId: dropId, authorUid: uid, text })
+        body: JSON.stringify({ dropId, authorUid: uid, text: trimmedText }),
       });
-      console.log("QStash scheduled.");
     } else {
-      console.warn("QSTASH_TOKEN missing, skipping expiry scheduling");
+      console.warn("QSTASH_TOKEN not set — expiry will not be scheduled.");
     }
 
-    return NextResponse.json({ success: true, dropId: dropId });
+    return NextResponse.json({ success: true, dropId });
   } catch (error) {
-    console.error("FATAL ERROR IN CONFESS ROUTE:", error);
-    return NextResponse.json({ error: error.message || "Internal Server Error" }, { status: 500 });
+    console.error("FATAL ERROR in /api/confess:", error);
+    return NextResponse.json(
+      { error: error.message || "Internal Server Error" },
+      { status: 500 }
+    );
   }
 }

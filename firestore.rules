@@ -3,31 +3,27 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // ── pendingConfessions ──────────────────────────────────────────────────
-    // Auth'd users can create their own confessions (must start as "pending").
-    // Nobody reads, updates, or deletes from the client — only the server
-    // (via Admin SDK) mutates moderationStatus.
+    // No client writes. The /api/confess route writes via Admin token.
+    // Authors can read their own confession status.
     match /pendingConfessions/{docId} {
-      // Authors can read their own confession status (e.g. passed → scheduled).
-      // All writes handled by Moderate Lambda (Admin SDK — bypasses rules).
       allow read: if request.auth != null
                   && resource.data.authorUid == request.auth.uid;
-      allow update, delete, create: if false;
+      allow write: if false;
     }
 
     // ── moderationLog ───────────────────────────────────────────────────────
-    // Inaccessible to normal clients. Admins (users with isAdmin == true in
-    // their users doc) can read for human review. Only the server writes.
+    // Inaccessible to all clients.
+    // Only the server (Admin token via /api/report) writes — bypasses these rules.
+    // Admins with the isAdmin custom claim can read (for human review).
     match /moderationLog/{docId} {
       allow read: if request.auth != null
-                  && get(/databases/$(database)/documents/users/$(request.auth.uid))
-                       .data.isAdmin == true;
+                  && request.auth.token.isAdmin == true;
       allow write: if false;
     }
 
     // ── users ────────────────────────────────────────────────────────────────
-    // Each auth'd user can read their own document (to check isFrozen, communityId).
-    // Users can also write their own communityId field.
-    // Only the server (Admin SDK) writes isFrozen, reportCount, etc.
+    // Each user can read their own doc and update only their communityId.
+    // Server (Admin token) writes isFrozen, reportCount, etc.
     match /users/{uid} {
       allow read: if request.auth != null && request.auth.uid == uid;
       allow create: if request.auth != null
@@ -39,114 +35,100 @@ service cloud.firestore {
     }
 
     // ── reports ──────────────────────────────────────────────────────────────
-    // Auth'd users can create reports during live drops. Write-only:
-    // no read access, no updates, no deletes from the client.
+    // Reports are submitted via /api/report (server-side) — no client access.
     match /reports/{docId} {
-      // All writes handled by Report Lambda (Admin SDK — bypasses rules)
-      allow read, update, delete, create: if false;
+      allow read, write: if false;
     }
 
-    // ── presence ────────────────────────────────────────────────────────────
-    // Each auth'd user can write their own heartbeat. Only the server reads.
+    // ── presence ─────────────────────────────────────────────────────────────
+    // Each auth'd user writes their own heartbeat (lastSeen, communityId, sortKey).
+    // No client reads — server samples presence for audience selection.
     match /presence/{uid} {
       allow write: if request.auth != null && request.auth.uid == uid;
-      allow read: if request.auth != null && request.auth.uid == "admin_bot_uid";
+      allow read: if false;
     }
 
-    // ── drops ───────────────────────────────────────────────────────────────
-    // Clients can read drops where their UID is in the recipient list.
-    // Edge API creates drops using the bot user.
+    // ── drops ────────────────────────────────────────────────────────────────
+    // Recipients and the author can read their own drops.
+    // Server creates and deletes drops.
     match /drops/{docId} {
       allow read: if request.auth != null
-                  && (request.auth.uid in resource.data.recipientUids || request.auth.uid == resource.data.authorUid);
-      allow write, delete: if request.auth != null && request.auth.uid == "admin_bot_uid";
+                  && (request.auth.uid in resource.data.recipientUids
+                      || request.auth.uid == resource.data.authorUid);
+      allow write: if false;
 
-      // ── reactions subcollection under drops ──────────────────────────────
-      // Clients who are recipients (or the author) of the parent drop can read reaction counts
-      // Recipients can increment them. Never store which user reacted.
+      // ── reactions subcollection ──────────────────────────────────────────
+      // Recipients and the author can read live reaction counts.
+      // Reactions are now written server-side via /api/react (Admin token).
+      // Clients subscribe via onSnapshot for real-time updates.
       match /reactions/{emojiType} {
         allow read: if request.auth != null
-                    && (request.auth.uid in get(/databases/$(database)/documents/drops/$(docId)).data.recipientUids || request.auth.uid == get(/databases/$(database)/documents/drops/$(docId)).data.authorUid);
-        allow update: if request.auth != null
-                      && request.auth.uid in
-                         get(/databases/$(database)/documents/drops/$(docId))
-                           .data.recipientUids
-                      && request.resource.data.keys().hasOnly(['count'])
-                      && request.resource.data.count is int;
-        allow create, delete: if request.auth != null && request.auth.uid == "admin_bot_uid";
+                    && (request.auth.uid in get(/databases/$(database)/documents/drops/$(docId)).data.recipientUids
+                        || request.auth.uid == get(/databases/$(database)/documents/drops/$(docId)).data.authorUid);
+        allow write: if false;
       }
 
-      // ── voters subcollection: one-reaction-per-user enforcement ─────────
-      // Each recipient can create exactly ONE voter doc keyed by their UID.
-      // No updates or deletes — once you vote, it's permanent for that drop.
-      // The client writes { emoji, votedAt } then increments the reaction count.
+      // ── voters subcollection ─────────────────────────────────────────────
+      // Clients can read their own voter doc (to check if already voted on load).
+      // Votes are written server-side via /api/react (Admin token).
       match /voters/{voterId} {
-        allow read: if request.auth != null
-                    && request.auth.uid == voterId;
-        allow create: if request.auth != null
-                      && request.auth.uid == voterId
-                      && request.auth.uid in
-                         get(/databases/$(database)/documents/drops/$(docId))
-                           .data.recipientUids
-                      && request.resource.data.keys().hasAll(['emoji', 'votedAt'])
-                      && request.resource.data.emoji is string;
-        allow update, delete: if request.auth != null && request.auth.uid == "admin_bot_uid";
+        allow read: if request.auth != null && request.auth.uid == voterId;
+        allow write: if false;
       }
 
-      // ── comments subcollection: anonymous ephemeral comments ────────────
-      // Recipients can read and create comments. No user identity stored
-      // in the comment doc — comments are fully anonymous and ephemeral.
+      // ── comments subcollection ───────────────────────────────────────────
+      // Recipients and the author can read and create comments.
+      // Comments are anonymous (no uid stored in doc — only text + createdAt).
       match /comments/{commentId} {
         allow read: if request.auth != null
-                    && (request.auth.uid == "admin_bot_uid" || request.auth.uid in get(/databases/$(database)/documents/drops/$(docId)).data.recipientUids || request.auth.uid == get(/databases/$(database)/documents/drops/$(docId)).data.authorUid);
+                    && (request.auth.uid in get(/databases/$(database)/documents/drops/$(docId)).data.recipientUids
+                        || request.auth.uid == get(/databases/$(database)/documents/drops/$(docId)).data.authorUid);
         allow create: if request.auth != null
-                      && request.auth.uid in
-                         get(/databases/$(database)/documents/drops/$(docId))
-                           .data.recipientUids
+                      && (request.auth.uid in get(/databases/$(database)/documents/drops/$(docId)).data.recipientUids
+                          || request.auth.uid == get(/databases/$(database)/documents/drops/$(docId)).data.authorUid)
                       && request.resource.data.keys().hasAll(['text', 'createdAt'])
                       && request.resource.data.text is string
                       && request.resource.data.text.size() <= 80;
-        allow update, delete: if request.auth != null && request.auth.uid == "admin_bot_uid";
+        allow update, delete: if false;
       }
     }
 
     // ── verdicts ──────────────────────────────────────────────────────────────
-    // Reaction totals only (NO confession text). Readable by auth'd users.
-    // Edge API writes verdicts upon drop expiry.
+    // Verdicts contain reaction totals + confession text (for author view).
+    // Readable by the author and any user who was a recipient of that drop.
+    // Server writes verdicts via /api/expire (Admin token).
     match /verdicts/{dropId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null && request.auth.uid == "admin_bot_uid";
+      allow read: if request.auth != null
+                  && (request.auth.uid == resource.data.authorUid
+                      || request.auth.uid in resource.data.recipientUids);
+      allow write: if false;
     }
 
     // ── hallOfFameStats ──────────────────────────────────────────────────────
     // Pure aggregate emoji totals per day. Readable by any auth'd user.
-    // No individual confession content — just vibe stats.
-    // Only the server (Admin SDK) writes these.
+    // No individual confession content — vibe stats only.
+    // Server writes via /api/expire (Admin token, field transforms).
     match /hallOfFameStats/{date} {
       allow read: if request.auth != null;
       allow write: if false;
     }
 
     // ── communities ──────────────────────────────────────────────────────────
-    // Community registry. Any auth'd user can read (for autocomplete search).
-    // Any auth'd user can create a new community (name, type, createdAt, memberCount).
-    // Only the server can update memberCount.
+    // Community registry. Auth'd users can read.
+    // Creating/joining is handled server-side via /api/community/join.
     match /communities/{communityId} {
       allow read: if request.auth != null;
-      allow create: if request.auth != null
-                    && request.resource.data.keys().hasAll(['name', 'nameLower', 'type', 'createdAt', 'memberCount'])
-                    && request.resource.data.memberCount == 1;
-      allow update, delete: if false;
+      allow write: if false;
     }
 
     // ── wsConnections ────────────────────────────────────────────────────────
-    // WebSocket connections tracking. No client access (Admin SDK only).
+    // WebSocket connection tracking. Server-only.
     match /wsConnections/{connectionId} {
       allow read, write: if false;
     }
 
-    // ── _connectionTest ─────────────────────────────────────────────────────
-    // Scoped to the user's own UID for the Firebase connection smoke test.
+    // ── _connectionTest ──────────────────────────────────────────────────────
+    // Firebase connection smoke test. Scoped to the user's own UID.
     match /_connectionTest/{docId} {
       allow read, write: if request.auth != null && request.auth.uid == docId;
     }

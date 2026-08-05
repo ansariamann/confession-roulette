@@ -22,7 +22,13 @@ export function useAuth() {
  */
 async function writeHeartbeat(uid, communityId) {
   try {
-    const payload = { lastSeen: serverTimestamp() };
+    const payload = {
+      lastSeen: serverTimestamp(),
+      // sortKey is a random float in [0, 1) used for scale-safe pivot sampling
+      // when selecting drop recipients. Refreshed on every heartbeat so the
+      // sampling distribution stays uniform across all active users.
+      sortKey: Math.random(),
+    };
     if (communityId) {
       payload.communityId = communityId;
     }

@@ -9,7 +9,7 @@ import {
   query,
   orderBy,
 } from "firebase/firestore";
-import { db, auth, API_URL } from "../firebase";
+import { db, auth } from "../firebase";
 import { useAuth } from "../context/AuthProvider";
 import { useDrop } from "../context/DropContext";
 import useFeedback from "../hooks/useFeedback";
@@ -135,37 +135,51 @@ export default function LiveDropScreen() {
     return () => { if (countdownRef.current) clearInterval(countdownRef.current); };
   }, [currentDrop]);
 
-  // Poll reactions
+  // Subscribe to reactions via Firestore onSnapshot (replaces 800ms polling)
+  // Each emoji is a separate doc in drops/{id}/reactions/{emoji}.
+  // Firestore pushes updates sub-second at zero polling overhead.
   useEffect(() => {
     if (!currentDrop) return;
-    const poll = async () => {
-      try {
-        const res = await fetch(`/api/react?dropId=${currentDrop.id}`, { cache: "no-store" });
-        if (!res.ok) return;
-        const data = await res.json();
+    const dropId = currentDrop.id;
+
+    const unsub = onSnapshot(
+      collection(db, "drops", dropId, "reactions"),
+      (snapshot) => {
         const counts = {};
-        for (const [k, v] of Object.entries(data.reactions || {})) counts[k] = parseInt(v, 10);
+        snapshot.docs.forEach((d) => {
+          counts[d.id] = d.data().count || 0;
+        });
 
         // Fire rising emoji for remote reactions
-        const prev = prevReactionsRef.current[currentDrop.id] || {};
+        const prev = prevReactionsRef.current[dropId] || {};
         for (const emoji of EMOJIS) {
           const diff = (counts[emoji] || 0) - (prev[emoji] || 0);
           if (diff > 0) {
             const newRisers = Array.from({ length: Math.min(diff, 3) }, () => {
               riserIdRef.current += 1;
-              return { key: riserIdRef.current, emoji, x: 10 + Math.random() * 80, delay: Math.random() * 200, scale: 0.6 + Math.random() * 0.6 };
+              return {
+                key: riserIdRef.current,
+                emoji,
+                x: 10 + Math.random() * 80,
+                delay: Math.random() * 200,
+                scale: 0.6 + Math.random() * 0.6,
+              };
             });
             setRisers((r) => [...r, ...newRisers]);
-            setTimeout(() => { const keys = new Set(newRisers.map((r) => r.key)); setRisers((r) => r.filter((ri) => !keys.has(ri.key))); }, 2000);
+            setTimeout(() => {
+              const keys = new Set(newRisers.map((r) => r.key));
+              setRisers((r) => r.filter((ri) => !keys.has(ri.key)));
+            }, 2000);
           }
         }
-        prevReactionsRef.current[currentDrop.id] = counts;
-        setReactionsMap((prev) => ({ ...prev, [currentDrop.id]: counts }));
-      } catch {}
-    };
-    poll();
-    const interval = setInterval(poll, 800);
-    return () => clearInterval(interval);
+
+        prevReactionsRef.current[dropId] = counts;
+        setReactionsMap((prev) => ({ ...prev, [dropId]: counts }));
+      },
+      () => {} // ignore errors silently (drop may have been deleted)
+    );
+
+    return () => unsub();
   }, [currentDrop]);
 
   // Check voted status
@@ -218,13 +232,18 @@ export default function LiveDropScreen() {
     setTimeout(() => { const keys = new Set(seeds.map((s) => s.key)); setBursts((prev) => prev.filter((b) => !keys.has(b.key))); }, 1400);
 
     try {
+      const token = auth.currentUser ? await auth.currentUser.getIdToken() : null;
       const res = await fetch("/api/react", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dropId, emoji, uid: user.uid }),
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ dropId, emoji }),
       });
       if (!res.ok) throw new Error("Reaction failed");
     } catch {
+      // Revert optimistic update on failure
       setVotedMap((prev) => ({ ...prev, [dropId]: false }));
       setReactionsMap((prev) => {
         const cur = prev[dropId] || {};
@@ -241,7 +260,7 @@ export default function LiveDropScreen() {
     setReportedMap((prev) => ({ ...prev, [dropId]: true }));
     try {
       const token = await auth.currentUser.getIdToken();
-      const res = await fetch(`${API_URL}/report`, {
+      const res = await fetch(`/api/report`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ dropId }),
@@ -339,6 +358,19 @@ export default function LiveDropScreen() {
 
       {/* Dark confession card */}
       <div className="confession-stage swipeable-card" key={currentDrop.id}>
+        {/* Left arrow — only shown with multiple drops */}
+        {visibleDrops.length > 1 && (
+          <button
+            className="drop-nav-arrow drop-nav-prev"
+            onClick={handlePrev}
+            disabled={currentIndex === 0}
+            aria-label="Previous confession"
+            id="drop-nav-prev"
+          >
+            ‹
+          </button>
+        )}
+
         <span className="stage-quote" aria-hidden="true">"</span>
         <p className="stage-text">{currentDrop.text}</p>
         <div className="stage-foot">
@@ -351,6 +383,19 @@ export default function LiveDropScreen() {
             {isReported ? "Reported" : "Report"}
           </button>
         </div>
+
+        {/* Right arrow — only shown with multiple drops */}
+        {visibleDrops.length > 1 && (
+          <button
+            className="drop-nav-arrow drop-nav-next"
+            onClick={handleNext}
+            disabled={currentIndex === visibleDrops.length - 1}
+            aria-label="Next confession"
+            id="drop-nav-next"
+          >
+            ›
+          </button>
+        )}
 
         {/* Burst particles */}
         <div className="burst-layer" aria-hidden="true">

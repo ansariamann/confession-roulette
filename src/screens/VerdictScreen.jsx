@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { doc, onSnapshot, collection, query, orderBy } from "firebase/firestore";
+import { doc, onSnapshot, collection, query, orderBy, addDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase";
 import { useAuth } from "../context/AuthProvider";
 import { useDrop } from "../context/DropContext";
@@ -17,6 +17,7 @@ const VERDICT_CAPTIONS = {
 };
 
 const AUTO_RETURN_MS = 18_000;
+const MAX_COMMENT_LENGTH = 40;
 
 function getDominantEmoji(reactions) {
   if (!reactions || Object.keys(reactions).length === 0) return null;
@@ -76,29 +77,61 @@ export default function VerdictScreen() {
   const { dropId: urlDropId } = useParams();
   const router = useRouter();
   const { user } = useAuth();
-  const { authorVerdicts, activeAuthorDropId } = useDrop();
-
-  // Use URL dropId first, otherwise fall back to the active author drop
-  const effectiveDropId = urlDropId || activeAuthorDropId;
-
-  // If we arrived at the generic /verdict route but have an active live drop, update the URL
-  useEffect(() => {
-    if (!urlDropId && activeAuthorDropId) {
-      router.replace(`/verdict/${activeAuthorDropId}`);
-    }
-  }, [urlDropId, activeAuthorDropId, router]);
-
-  const [urlVerdict, setUrlVerdict] = useState(null);
-  const [loading, setLoading] = useState(!!effectiveDropId && authorVerdicts.length === 0);
-  const [error, setError] = useState(null);
-
-  const [isLive, setIsLive] = useState(false);
-  const [liveDropText, setLiveDropText] = useState("");
-  const [liveReactions, setLiveReactions] = useState({});
-  const [liveComments, setLiveComments] = useState([]);
-  const [userRemainingMs, setUserRemainingMs] = useState(DROP_DURATION_MS);
+  const { activeAuthorDrops } = useDrop();
 
   const [currentIndex, setCurrentIndex] = useState(0);
+
+  // Sync currentIndex with active drops if we are viewing them
+  useEffect(() => {
+    if (activeAuthorDrops.length > 0) {
+      if (currentIndex >= activeAuthorDrops.length) {
+        setCurrentIndex(activeAuthorDrops.length - 1);
+      }
+    }
+  }, [activeAuthorDrops.length, currentIndex]);
+
+  // Set initial currentIndex based on URL if matching an active drop
+  useEffect(() => {
+    if (urlDropId && activeAuthorDrops.length > 0) {
+      const idx = activeAuthorDrops.findIndex(d => d.id === urlDropId);
+      if (idx !== -1 && idx !== currentIndex) {
+        setCurrentIndex(idx);
+      }
+    }
+  }, [urlDropId, activeAuthorDrops, currentIndex]);
+
+  const activeDrop = activeAuthorDrops[currentIndex];
+  
+  // Use active drop from array, otherwise fall back to URL drop (historical)
+  const effectiveDropId = activeDrop ? activeDrop.id : urlDropId;
+  const isCurrentlyActive = !!activeDrop;
+
+  const [loading, setLoading] = useState(!isCurrentlyActive && !!effectiveDropId);
+  const [error, setError] = useState(null);
+
+  const [isLive, setIsLive] = useState(isCurrentlyActive);
+  const [liveDropText, setLiveDropText] = useState(isCurrentlyActive ? activeDrop.text : "");
+  const [liveReactions, setLiveReactions] = useState({});
+  const [liveComments, setLiveComments] = useState([]);
+  
+  const [userRemainingMs, setUserRemainingMs] = useState(DROP_DURATION_MS);
+  
+  // Fast optimistic sync when swiping between drops
+  useEffect(() => {
+    if (activeDrop) {
+      setIsLive(true);
+      setLoading(false);
+      setLiveDropText(activeDrop.text);
+      setUserRemainingMs(Math.max(0, DROP_DURATION_MS - (Date.now() - activeDrop.broadcastStartedAt)));
+      setLiveReactions({});
+      setLiveComments([]);
+      setHasCommented(false);
+    }
+  }, [activeDrop]);
+
+  const [commentText, setCommentText] = useState("");
+  const [hasCommented, setHasCommented] = useState(false);
+
   const touchStartXRef = useRef(null);
   const commentsEndRef = useRef(null);
 
@@ -159,6 +192,7 @@ export default function VerdictScreen() {
         }
       } else {
         setIsLive(false);
+        setLoading(false);
         if (countdownInterval) clearInterval(countdownInterval);
         if (pollInterval) clearInterval(pollInterval);
         unsubComments();
@@ -173,42 +207,35 @@ export default function VerdictScreen() {
     };
   }, [effectiveDropId, user]);
 
-  // ── 2. Static Verdict Listener ───────────────────────────────────────────
+  // ── Redirect when expired ───────────────────────────────────────────────
   useEffect(() => {
-    if (!effectiveDropId || !user || isLive) return;
-    const existing = authorVerdicts.find((v) => v.id === effectiveDropId);
-    if (existing) { setUrlVerdict(existing); setLoading(false); return; }
+    // If we have an effectiveDropId but it's no longer live and we finished loading the snapshot,
+    // we should just show the empty state and clear the URL.
+    if (effectiveDropId && !isLive && !loading) {
+      router.replace("/verdict");
+    }
+  }, [effectiveDropId, isLive, loading, router]);
 
-    const unsubscribe = onSnapshot(doc(db, "verdicts", effectiveDropId), (snapshot) => {
-      if (snapshot.exists()) {
-        setUrlVerdict({ id: snapshot.id, ...snapshot.data() });
-        setLoading(false);
-        setError(null);
-      }
-    }, (err) => {
-      setError("Could not load the verdict.");
-      setLoading(false);
-    });
-
-    const timeout = setTimeout(() => {
-      setLoading((prev) => {
-        if (prev) { setError("Verdict timed out — results may have already expired."); return false; }
-        return prev;
+  // ── Comment Submission ──────────────────────────────────────────────────
+  const handleCommentSubmit = useCallback(async (e) => {
+    e.preventDefault();
+    if (!effectiveDropId || !user || !commentText.trim() || hasCommented || !isLive) return;
+    
+    const trimmed = commentText.trim().slice(0, MAX_COMMENT_LENGTH);
+    setHasCommented(true);
+    setCommentText("");
+    
+    try {
+      await addDoc(collection(db, "drops", effectiveDropId, "comments"), { 
+        text: trimmed, 
+        createdAt: serverTimestamp() 
       });
-    }, 15_000);
-
-    return () => { unsubscribe(); clearTimeout(timeout); };
-  }, [effectiveDropId, user, isLive, authorVerdicts]);
+    } catch {
+      setHasCommented(false);
+    }
+  }, [effectiveDropId, user, commentText, hasCommented, isLive]);
 
   // ── Data Resolution ───────────────────────────────────────────────────────
-  const verdictsList = authorVerdicts.length > 0 ? authorVerdicts : urlVerdict ? [urlVerdict] : [];
-
-  useEffect(() => {
-    if (currentIndex >= verdictsList.length && verdictsList.length > 0) {
-      setCurrentIndex(verdictsList.length - 1);
-    }
-  }, [verdictsList.length, currentIndex]);
-
   let activeText = "";
   let activeReactions = {};
   let activeComments = [];
@@ -217,17 +244,7 @@ export default function VerdictScreen() {
     activeText = liveDropText;
     activeReactions = liveReactions;
     activeComments = liveComments;
-  } else {
-    const v = verdictsList[currentIndex] || null;
-    if (v) { activeText = v.text || ""; activeReactions = v.reactions || {}; activeComments = v.comments || []; }
   }
-
-  // ── Auto-return ──────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (isLive || verdictsList.length === 0) return;
-    const timer = setTimeout(() => router.replace("/"), AUTO_RETURN_MS);
-    return () => clearTimeout(timer);
-  }, [verdictsList.length, isLive, router]);
 
   // ── Auto-scroll comments ─────────────────────────────────────────────────
   useEffect(() => {
@@ -237,12 +254,17 @@ export default function VerdictScreen() {
   }, [activeComments]);
 
   // ── Swipe handlers ────────────────────────────────────────────────────────
-  const handlePrev = useCallback(() => { if (currentIndex > 0) setCurrentIndex((i) => i - 1); }, [currentIndex]);
-  const handleNext = useCallback(() => { if (currentIndex < verdictsList.length - 1) setCurrentIndex((i) => i + 1); }, [currentIndex, verdictsList.length]);
+  const handlePrev = useCallback(() => {
+    if (currentIndex > 0) setCurrentIndex((i) => i - 1);
+  }, [currentIndex]);
+  
+  const handleNext = useCallback(() => {
+    if (currentIndex < activeAuthorDrops.length - 1) setCurrentIndex((i) => i + 1);
+  }, [currentIndex, activeAuthorDrops.length]);
 
-  function handleTouchStart(e) { if (isLive) return; touchStartXRef.current = e.touches[0].clientX; }
+  function handleTouchStart(e) { if (!isCurrentlyActive) return; touchStartXRef.current = e.touches[0].clientX; }
   function handleTouchEnd(e) {
-    if (isLive || touchStartXRef.current === null) return;
+    if (!isCurrentlyActive || touchStartXRef.current === null) return;
     const diffX = touchStartXRef.current - e.changedTouches[0].clientX;
     touchStartXRef.current = null;
     if (diffX > 40) handleNext();
@@ -257,7 +279,7 @@ export default function VerdictScreen() {
   const isUrgent = userSeconds <= 5;
 
   // ── RENDER: Empty ─────────────────────────────────────────────────────────
-  if (!effectiveDropId && verdictsList.length === 0 && !isLive) {
+  if (!isLive && !loading) {
     return (
       <div className="screen" id="verdict-screen">
         <div className="vrd-empty">
@@ -270,19 +292,19 @@ export default function VerdictScreen() {
   }
 
   // ── RENDER: Loading ───────────────────────────────────────────────────────
-  if (loading && verdictsList.length === 0 && !isLive) {
+  if (loading && !isLive) {
     return (
       <div className="screen" id="verdict-screen">
         <div className="vrd-empty">
           <div className="loading-spinner" />
-          <p className="screen-subtitle">Tallying the reactions…</p>
+          <p className="screen-subtitle">Loading live drop...</p>
         </div>
       </div>
     );
   }
 
   // ── RENDER: Error ─────────────────────────────────────────────────────────
-  if (error && verdictsList.length === 0 && !isLive) {
+  if (error && !isLive) {
     return (
       <div className="screen" id="verdict-screen">
         <div className="vrd-empty">
@@ -302,32 +324,21 @@ export default function VerdictScreen() {
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
-      {/* Multi-verdict dots */}
-      {!isLive && verdictsList.length > 1 && (
-        <div className="vrd-dots">
-          {verdictsList.map((v, idx) => (
-            <button
-              key={v.id}
-              className={`vrd-dot${idx === currentIndex ? " active" : ""}`}
-              onClick={() => setCurrentIndex(idx)}
-              aria-label={`Verdict ${idx + 1}`}
-            />
+      {/* Story-style segment bars for multiple active drops */}
+      {isCurrentlyActive && activeAuthorDrops.length > 1 && (
+        <div className="story-bars" style={{ padding: '0 20px', paddingTop: 20 }}>
+          {activeAuthorDrops.map((d, idx) => (
+            <button key={d.id} className="story-bar" onClick={() => setCurrentIndex(idx)} aria-label={`Confession ${idx + 1}`}>
+              <span className="story-bar-fill" style={{
+                width: idx < currentIndex ? "100%" : idx === currentIndex ? `${(1 - progress) * 100}%` : "0%",
+              }} />
+            </button>
           ))}
         </div>
       )}
 
       {/* Hero confession card */}
       <div className={`vrd-card${isLive ? " vrd-card-live" : ""}`}>
-        {/* Live badge OR verdict crown */}
-        {isLive ? (
-          <div className="vrd-live-badge">
-            <span className="vrd-live-dot" />
-            <span>LIVE</span>
-          </div>
-        ) : dominant ? (
-          <div className="vrd-crown">{dominant}</div>
-        ) : null}
-
         {/* Confession text */}
         {activeText ? (
           <blockquote className="vrd-confession-text">"{activeText}"</blockquote>
@@ -377,6 +388,30 @@ export default function VerdictScreen() {
           )}
           <div ref={commentsEndRef} />
         </div>
+        
+        {/* Author comment input (live only) */}
+        {isLive && (
+          <form className="ld-comment-bar" onSubmit={handleCommentSubmit} style={{ marginTop: 12 }}>
+            <input
+              type="text"
+              className="ld-comment-input"
+              placeholder={hasCommented ? "Comment sent ✓" : "Drop a comment…"}
+              value={commentText}
+              onChange={(e) => setCommentText(e.target.value)}
+              maxLength={MAX_COMMENT_LENGTH}
+              disabled={hasCommented || userRemainingMs <= 0}
+              id="author-comment-input"
+            />
+            <button
+              type="submit"
+              className="ld-comment-send"
+              disabled={hasCommented || !commentText.trim() || userRemainingMs <= 0}
+              id="author-comment-send-btn"
+            >
+              ↑
+            </button>
+          </form>
+        )}
       </div>
 
       {/* Footer hint */}

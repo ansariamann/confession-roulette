@@ -1,101 +1,252 @@
+// ─── POST /api/expire ─────────────────────────────────────────────────────────
+// Called by QStash exactly DROP_DURATION_S seconds after a drop is created.
+// Performs the hard-delete sequence and writes the verdict + hall of fame.
+//
+// Flow:
+//  1. Verify QStash signature (prevents arbitrary callers from triggering expiry)
+//  2. Read final reaction counts from Firestore reactions subcollection
+//  3. Read final comments from Firestore comments subcollection
+//  4. Write verdict doc (reaction totals only + confession text for author view)
+//  5. Hard-delete: reactions, voters, comments subcollections + drop doc
+//  6. Idempotency: skip if drop already deleted (QStash may retry on timeout)
+//  7. Hall of Fame rollup: update daily aggregate emoji totals
+// ─────────────────────────────────────────────────────────────────────────────
+
 import { NextResponse } from "next/server";
-import { Redis } from "@upstash/redis";
+import { getAdminToken, firestoreBase } from "../_lib/adminToken";
+
+const EMOJIS = ["😂", "💀", "😬", "❤️", "😳"];
+
+/**
+ * Fetch all documents in a Firestore subcollection.
+ * Returns array of { id, fields } objects.
+ */
+async function fetchSubcollection(base, path, adminToken) {
+  const res = await fetch(`${base}/${path}`, {
+    headers: { Authorization: `Bearer ${adminToken}` },
+  });
+  if (!res.ok) return [];
+  const data = await res.json();
+  return (data.documents || []).map((doc) => ({
+    id: doc.name.split("/").pop(),
+    fields: doc.fields || {},
+    name: doc.name,
+  }));
+}
+
+/**
+ * Delete a list of Firestore document paths via batch commit.
+ */
+async function batchDelete(projectId, docPaths, adminToken) {
+  if (docPaths.length === 0) return;
+  const writes = docPaths.map((name) => ({ delete: name }));
+  await fetch(
+    `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents:commit`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${adminToken}`,
+      },
+      body: JSON.stringify({ writes }),
+    }
+  );
+}
+
+/**
+ * Update hallOfFameStats/{date} with today's aggregate emoji totals.
+ * Uses a Firestore transaction to safely merge with existing daily totals.
+ */
+async function updateHallOfFame(reactionTotals, totalReactions, adminToken) {
+  const projectId = process.env.VITE_FIREBASE_PROJECT_ID;
+  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD UTC
+  const docPath = `projects/${projectId}/databases/(default)/documents/hallOfFameStats/${today}`;
+
+  const transforms = [];
+  for (const emoji of EMOJIS) {
+    const count = reactionTotals[emoji] || 0;
+    if (count > 0) {
+      transforms.push({
+        fieldPath: `emojiTotals.${emoji}`,
+        increment: { integerValue: count },
+      });
+    }
+  }
+  transforms.push({
+    fieldPath: "totalReactions",
+    increment: { integerValue: totalReactions },
+  });
+  transforms.push({
+    fieldPath: "totalConfessions",
+    increment: { integerValue: 1 },
+  });
+
+  if (transforms.length === 0) return;
+
+  await fetch(
+    `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents:commit`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${adminToken}`,
+      },
+      body: JSON.stringify({
+        writes: [
+          {
+            transform: {
+              document: docPath,
+              fieldTransforms: transforms,
+            },
+          },
+        ],
+      }),
+    }
+  );
+}
 
 export async function POST(req) {
   try {
     const { dropId, authorUid, text } = await req.json();
-    if (!dropId) return NextResponse.json({ error: "Missing dropId" }, { status: 400 });
+    if (!dropId) {
+      return NextResponse.json({ error: "Missing dropId" }, { status: 400 });
+    }
 
+    const adminToken = await getAdminToken();
     const projectId = process.env.VITE_FIREBASE_PROJECT_ID;
-    const apiKey = process.env.VITE_FIREBASE_API_KEY;
-    if (!projectId || !apiKey) {
-      return NextResponse.json({ error: "Server misconfiguration (Firebase)" }, { status: 500 });
+    const BASE = firestoreBase();
+    const headers = {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${adminToken}`,
+    };
+
+    // ── 1. Idempotency: check if drop still exists ──────────────────────────
+    const dropCheck = await fetch(`${BASE}/drops/${dropId}`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    });
+
+    if (!dropCheck.ok || dropCheck.status === 404) {
+      // Drop already deleted — this is a QStash retry on a completed expiry. Skip.
+      console.log(`Drop ${dropId} already expired — skipping duplicate expiry.`);
+      return NextResponse.json({ success: true, skipped: true });
     }
 
-    // 1. Authenticate as Bot User (REST)
-    const authRes = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: "bot@confessionroulette.com", password: "super_secret_bot_password", returnSecureToken: true })
-    });
-    const authData = await authRes.json();
-    if (!authRes.ok) throw new Error("Bot Auth Failed: " + JSON.stringify(authData));
-    const idToken = authData.idToken;
+    const dropDoc = await dropCheck.json();
+    if (dropDoc.error) {
+      console.log(`Drop ${dropId} not found — skipping.`);
+      return NextResponse.json({ success: true, skipped: true });
+    }
 
-    // 2. Fetch final reactions from Upstash Redis
-    const redis = new Redis({
-      url: process.env.UPSTASH_REDIS_REST_URL || "",
-      token: process.env.UPSTASH_REDIS_REST_TOKEN || "",
-    });
-    
-    const reactions = await redis.hgetall(`reactions:${dropId}`) || {};
+    // ── 2. Read final reaction counts from Firestore ─────────────────────────
+    const reactionDocs = await fetchSubcollection(
+      BASE,
+      `drops/${dropId}/reactions`,
+      adminToken
+    );
+
     const reactionTotals = {};
-    for (const [k, v] of Object.entries(reactions)) {
-      reactionTotals[k] = parseInt(v, 10);
-    }
-    const totalReactions = Object.values(reactionTotals).reduce((a, b) => a + b, 0);
-
-    // 3. Fetch comments from Firestore before deleting (REST)
-    const commentsRes = await fetch(`https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/drops/${dropId}/comments`, {
-      method: "GET",
-      headers: { "Authorization": `Bearer ${idToken}` }
-    });
-    const commentsData = await commentsRes.json();
-    const comments = [];
-    if (commentsData.documents) {
-      commentsData.documents.forEach(doc => {
-        const id = doc.name.split("/").pop();
-        comments.push({ id, text: doc.fields?.text?.stringValue || "", createdAt: doc.fields?.createdAt?.timestampValue || "" });
-      });
+    for (const doc of reactionDocs) {
+      reactionTotals[doc.id] = parseInt(doc.fields?.count?.integerValue ?? "0", 10);
     }
 
-    // 4. Write Verdict (REST)
+    const totalReactions = Object.values(reactionTotals).reduce(
+      (a, b) => a + b,
+      0
+    );
+
+    // ── 3. Read final comments from Firestore ────────────────────────────────
+    const commentDocs = await fetchSubcollection(
+      BASE,
+      `drops/${dropId}/comments`,
+      adminToken
+    );
+
+    const comments = commentDocs.map((doc) => ({
+      id: doc.id,
+      text: doc.fields?.text?.stringValue || "",
+      createdAt: doc.fields?.createdAt?.timestampValue || "",
+    }));
+
+    // ── 4. Write verdict doc ─────────────────────────────────────────────────
+    // Stores reaction totals, comments, and the confession text (for author view only).
+    // Verdict is readable only by the author and recipients (enforced in Firestore rules).
     const verdictFields = {
       dropId: { stringValue: dropId },
-      authorUid: { stringValue: authorUid },
-      text: { stringValue: text },
+      authorUid: { stringValue: authorUid || "" },
+      text: { stringValue: text || "" },
       totalReactions: { integerValue: totalReactions },
       expiredAt: { timestampValue: new Date().toISOString() },
       reactions: {
         mapValue: {
           fields: Object.fromEntries(
-            Object.entries(reactionTotals).map(([k, v]) => [k, { integerValue: v }])
-          )
-        }
+            Object.entries(reactionTotals).map(([k, v]) => [
+              k,
+              { integerValue: v },
+            ])
+          ),
+        },
       },
       comments: {
         arrayValue: {
-          values: comments.map(c => ({
+          values: comments.map((c) => ({
             mapValue: {
               fields: {
                 id: { stringValue: c.id },
                 text: { stringValue: c.text },
-                createdAt: { timestampValue: c.createdAt }
-              }
-            }
-          }))
-        }
-      }
+                createdAt: { timestampValue: c.createdAt || new Date().toISOString() },
+              },
+            },
+          })),
+        },
+      },
     };
 
-    await fetch(`https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/verdicts?documentId=${dropId}`, {
+    await fetch(`${BASE}/verdicts?documentId=${dropId}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${idToken}` },
-      body: JSON.stringify({ fields: verdictFields })
+      headers,
+      body: JSON.stringify({ fields: verdictFields }),
     });
 
-    // 5. Hard Delete Drop (REST)
-    await fetch(`https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/drops/${dropId}`, {
+    // ── 5. Hard-delete subcollections then the drop doc ──────────────────────
+    // Collect all subcollection doc paths
+    const voterDocs = await fetchSubcollection(
+      BASE,
+      `drops/${dropId}/voters`,
+      adminToken
+    );
+
+    const allDocPaths = [
+      ...reactionDocs.map((d) => d.name),
+      ...commentDocs.map((d) => d.name),
+      ...voterDocs.map((d) => d.name),
+    ];
+
+    // Delete subcollection docs in batches of 500 (Firestore batch limit)
+    for (let i = 0; i < allDocPaths.length; i += 500) {
+      await batchDelete(projectId, allDocPaths.slice(i, i + 500), adminToken);
+    }
+
+    // Delete the drop document itself
+    await fetch(`${BASE}/drops/${dropId}`, {
       method: "DELETE",
-      headers: { "Authorization": `Bearer ${idToken}` }
+      headers: { Authorization: `Bearer ${adminToken}` },
     });
 
-    // 6. Cleanup Redis
-    await redis.del(`reactions:${dropId}`, `voters:${dropId}`);
+    console.log(
+      `✅ Drop ${dropId} expired: ${totalReactions} reactions, ${comments.length} comments, hard-deleted.`
+    );
 
-    return NextResponse.json({ success: true });
+    // ── 6. Hall of Fame daily rollup ─────────────────────────────────────────
+    // Atomically increment today's aggregate emoji totals.
+    // No confession text is stored — aggregate counts only.
+    await updateHallOfFame(reactionTotals, totalReactions, adminToken);
+
+    return NextResponse.json({ success: true, totalReactions });
   } catch (error) {
-    console.error("Expiry Error:", error);
-    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+    console.error("Expiry error:", error);
+    return NextResponse.json(
+      { error: "Internal Server Error" },
+      { status: 500 }
+    );
   }
 }

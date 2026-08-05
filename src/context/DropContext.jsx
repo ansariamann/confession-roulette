@@ -62,7 +62,9 @@ export default function DropProvider({ children }) {
   const [authorVerdicts, setAuthorVerdicts] = useState([]);
   const [pendingVerdict, setPendingVerdict] = useState(null);
   const [pendingAuthorDrop, setPendingAuthorDrop] = useState(null);
+  const [activeAuthorDrops, setActiveAuthorDrops] = useState([]);
   const [activeAuthorDropId, setActiveAuthorDropId] = useState(null);
+  const [activeAuthorDropData, setActiveAuthorDropData] = useState(null);
   const [isComposing, setIsComposing] = useState(false);
 
   const seenDropIdsRef = useRef(loadSeenDropIds());
@@ -82,7 +84,6 @@ export default function DropProvider({ children }) {
 
     const q = query(
       collection(db, "drops"),
-      where("status", "==", "broadcasting"),
       where("recipientUids", "array-contains", user.uid),
     );
 
@@ -135,7 +136,6 @@ export default function DropProvider({ children }) {
 
     const q = query(
       collection(db, "drops"),
-      where("status", "==", "broadcasting"),
       where("authorUid", "==", user.uid),
     );
 
@@ -143,31 +143,46 @@ export default function DropProvider({ children }) {
       q,
       (snapshot) => {
         if (snapshot.empty) {
+          setActiveAuthorDrops([]);
           setActiveAuthorDropId(null);
+          setActiveAuthorDropData(null);
           return;
         }
         
-        const docSnap = snapshot.docs[0];
-        const data = docSnap.data();
-        const broadcastStartedAt = data.broadcastStartedAt;
+        const drops = [];
+        snapshot.docs.forEach((docSnap) => {
+          const data = docSnap.data();
+          const broadcastStartedAt = data.broadcastStartedAt;
+          if (broadcastStartedAt && typeof broadcastStartedAt.toMillis === "function") {
+            const startMs = broadcastStartedAt.toMillis();
+            const elapsed = Date.now() - startMs;
+            if (elapsed < DROP_DURATION_MS) {
+              drops.push({
+                id: docSnap.id,
+                text: data.text,
+                broadcastStartedAt: startMs,
+              });
+            }
+          }
+        });
+        
+        // Sort oldest first (so they appear in order of submission)
+        drops.sort((a, b) => a.broadcastStartedAt - b.broadcastStartedAt);
+        setActiveAuthorDrops(drops);
 
-        if (!broadcastStartedAt || typeof broadcastStartedAt.toMillis !== "function") {
-          return;
-        }
-
-        const startMs = broadcastStartedAt.toMillis();
-        const elapsed = Date.now() - startMs;
-
-        // If it is still live and we haven't seen it in the static verdicts yet
-        if (elapsed < DROP_DURATION_MS) {
-          setActiveAuthorDropId(docSnap.id);
-          setPendingAuthorDrop({
-            id: docSnap.id,
-            text: data.text,
-            broadcastStartedAt: startMs,
-          });
+        if (drops.length > 0) {
+          const first = drops[0];
+          setActiveAuthorDropId(first.id);
+          setActiveAuthorDropData(first);
+          
+          // Only trigger auto-nav for the newest one, or just set it
+          // Actually, if we have active drops, let's just trigger on the most recently added one
+          const newest = drops[drops.length - 1];
+          // We can use a ref to track which ones we've auto-navved to
+          setPendingAuthorDrop(newest);
         } else {
           setActiveAuthorDropId(null);
+          setActiveAuthorDropData(null);
         }
       },
       (error) => {
@@ -178,72 +193,13 @@ export default function DropProvider({ children }) {
     return () => unsub();
   }, [user]);
 
-  // ── Global Firestore listener for author verdicts ────────────────────────
-  useEffect(() => {
-    if (!user) return;
-
-    knownVerdictIdsRef.current = null;
-    pendingVerdictQueueRef.current = [];
-
-    const q = query(
-      collection(db, "verdicts"),
-      where("authorUid", "==", user.uid),
-    );
-
-    const unsub = onSnapshot(q, (snapshot) => {
-      const isInitial = knownVerdictIdsRef.current === null;
-      if (isInitial) {
-        knownVerdictIdsRef.current = new Set();
-      }
-
-      const verdictsList = [];
-      const newVerdicts = [];
-
-      snapshot.docs.forEach((docSnap) => {
-        const id = docSnap.id;
-        const data = docSnap.data();
-        verdictsList.push({ id, ...data });
-
-        if (!knownVerdictIdsRef.current.has(id)) {
-          knownVerdictIdsRef.current.add(id);
-          if (!isInitial) {
-            newVerdicts.push({ id, ...data });
-          }
-        }
-      });
-
-      verdictsList.sort((a, b) => {
-        const aMs = a.expiredAt?.toMillis ? a.expiredAt.toMillis() : 0;
-        const bMs = b.expiredAt?.toMillis ? b.expiredAt.toMillis() : 0;
-        return bMs - aMs;
-      });
-
-      // Keep only the 20 most recent verdicts in memory
-      setAuthorVerdicts(verdictsList.slice(0, 20));
-
-      if (newVerdicts.length > 0) {
-        pendingVerdictQueueRef.current.push(...newVerdicts);
-        setPendingVerdict(pendingVerdictQueueRef.current[0]);
-      }
-    });
-
-    return () => unsub();
-  }, [user]);
-
   function consumeDrop() {
     if (pendingDrop) {
       markDropSeen(pendingDrop.id);
     }
   }
 
-  function consumeVerdict() {
-    pendingVerdictQueueRef.current.shift();
-    setPendingVerdict(
-      pendingVerdictQueueRef.current.length > 0
-        ? pendingVerdictQueueRef.current[0]
-        : null,
-    );
-  }
+  function consumeVerdict() {}
 
   const consumeAuthorDrop = useCallback(() => {
     setPendingAuthorDrop(null);
@@ -261,7 +217,9 @@ export default function DropProvider({ children }) {
         consumeVerdict,
         pendingAuthorDrop,
         consumeAuthorDrop,
+        activeAuthorDrops,
         activeAuthorDropId,
+        activeAuthorDropData,
         isComposing,
         setIsComposing,
       }}

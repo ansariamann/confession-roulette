@@ -15,6 +15,8 @@ function NavBar() {
     return pathname.startsWith(path);
   };
 
+  const { activeAuthorDropId } = useDrop();
+
   const navItems = [
     {
       path: "/",

@@ -577,6 +577,54 @@ body, #root {
   transition: width 140ms linear;
 }
 
+/* ── Drop navigation arrows ─────────────────────────────────────────────── */
+.drop-nav-arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 10;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: var(--ink);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 180ms, transform 120ms, background 180ms;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.drop-nav-arrow:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.drop-nav-arrow:active:not(:disabled) {
+  transform: translateY(-50%) scale(0.88);
+}
+
+.drop-nav-arrow:disabled {
+  opacity: 0.2;
+  cursor: default;
+  pointer-events: none;
+}
+
+.drop-nav-prev {
+  left: 10px;
+}
+
+.drop-nav-next {
+  right: 10px;
+}
+
+
 .live-meta {
   display: flex;
   align-items: center;
@@ -632,11 +680,11 @@ body, #root {
   flex-direction: column;
   justify-content: center;
   gap: 20px;
-  padding: 28px 22px 18px;
+  padding: 28px 56px 18px; /* extra h-padding for nav arrows */
   border-radius: 20px;
   background: var(--ink);
   color: var(--paper);
-  overflow: hidden;
+  overflow: visible; /* allow arrows to be clickable outside card edge if needed */
   animation: stage-in 360ms var(--ease) both;
 }
 

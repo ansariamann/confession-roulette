@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getAdminToken, verifyIdToken, firestoreBase } from "../../_lib/adminToken";
 
 /**
  * POST /api/community/join
@@ -19,88 +20,57 @@ export async function POST(req) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const projectId = process.env.VITE_FIREBASE_PROJECT_ID;
-    const apiKey    = process.env.VITE_FIREBASE_API_KEY;
-    if (!projectId || !apiKey) {
-      return NextResponse.json({ error: "Server misconfiguration" }, { status: 500 });
-    }
-
-    // ── 1. Verify ID token via Firebase Auth REST ──────────────────────────
-    const verifyRes = await fetch(
-      `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ idToken }),
-      },
-    );
-    const verifyData = await verifyRes.json();
-    if (!verifyRes.ok || !verifyData.users?.[0]?.localId) {
+    let uid;
+    try {
+      uid = await verifyIdToken(idToken);
+    } catch {
       return NextResponse.json({ error: "Invalid token" }, { status: 401 });
     }
-    const uid = verifyData.users[0].localId;
 
-    // ── 2. Parse + validate body ────────────────────────────────────────────
     const body = await req.json();
     const rawName = (body.communityName || "").trim().slice(0, 40);
     if (rawName.length < 2) {
-      return NextResponse.json({ error: "Community name must be at least 2 characters" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Community name must be at least 2 characters" },
+        { status: 400 }
+      );
     }
-    const communityId   = rawName;
+
+    const communityId = rawName;
     const communityNameLower = rawName.toLowerCase();
 
-    // ── 3. Bot auth for Firestore REST ──────────────────────────────────────
-    const botAuthRes = await fetch(
-      `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: "bot@confessionroulette.com",
-          password: "super_secret_bot_password",
-          returnSecureToken: true,
-        }),
-      },
-    );
-    const botAuthData = await botAuthRes.json();
-    if (!botAuthRes.ok || !botAuthData.idToken) {
-      console.error("Bot auth failed:", botAuthData);
-      return NextResponse.json({ error: "Internal auth error" }, { status: 500 });
-    }
-    const botToken = botAuthData.idToken;
-    const BASE = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents`;
+    const adminToken = await getAdminToken();
+    const projectId = process.env.VITE_FIREBASE_PROJECT_ID;
+    const BASE = firestoreBase();
     const headers = {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${botToken}`,
+      Authorization: `Bearer ${adminToken}`,
     };
+    const BASE_QUERY = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents:runQuery`;
 
-    // ── 4. Upsert community doc ─────────────────────────────────────────────
+    // ── 1. Find existing community by nameLower ─────────────────────────────
     let currentMemberCount = 0;
     let targetDocPath = `${BASE}/communities/${encodeURIComponent(communityId)}`;
     let targetCommunityName = rawName;
     let isExistingCommunity = false;
 
-    // Find existing community by nameLower
-    const queryRes = await fetch(
-      `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents:runQuery`,
-      {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          structuredQuery: {
-            from: [{ collectionId: "communities" }],
-            where: {
-              fieldFilter: {
-                field: { fieldPath: "nameLower" },
-                op: "EQUAL",
-                value: { stringValue: communityNameLower },
-              },
+    const queryRes = await fetch(BASE_QUERY, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        structuredQuery: {
+          from: [{ collectionId: "communities" }],
+          where: {
+            fieldFilter: {
+              field: { fieldPath: "nameLower" },
+              op: "EQUAL",
+              value: { stringValue: communityNameLower },
             },
-            limit: 1,
           },
-        }),
-      }
-    );
+          limit: 1,
+        },
+      }),
+    });
 
     if (queryRes.ok) {
       const queryData = await queryRes.json();
@@ -115,7 +85,7 @@ export async function POST(req) {
       }
     }
 
-    // Read current user doc to see if they're changing communities
+    // ── 2. Check user's current community ──────────────────────────────────
     const userDocRes = await fetch(`${BASE}/users/${uid}`, { headers });
     let previousCommunityId = null;
     if (userDocRes.ok) {
@@ -123,28 +93,29 @@ export async function POST(req) {
       previousCommunityId = userDoc.fields?.communityId?.stringValue || null;
     }
 
-    // If switching, we need to decrement old community's count
-    if (previousCommunityId && previousCommunityId.toLowerCase() !== communityNameLower) {
-      const oldQueryRes = await fetch(
-        `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents:runQuery`,
-        {
-          method: "POST",
-          headers,
-          body: JSON.stringify({
-            structuredQuery: {
-              from: [{ collectionId: "communities" }],
-              where: {
-                fieldFilter: {
-                  field: { fieldPath: "nameLower" },
-                  op: "EQUAL",
-                  value: { stringValue: previousCommunityId.toLowerCase() },
-                },
+    // ── 3. Decrement old community count if switching ───────────────────────
+    if (
+      previousCommunityId &&
+      previousCommunityId.toLowerCase() !== communityNameLower
+    ) {
+      const oldQueryRes = await fetch(BASE_QUERY, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          structuredQuery: {
+            from: [{ collectionId: "communities" }],
+            where: {
+              fieldFilter: {
+                field: { fieldPath: "nameLower" },
+                op: "EQUAL",
+                value: { stringValue: previousCommunityId.toLowerCase() },
               },
-              limit: 1,
             },
-          }),
-        }
-      );
+            limit: 1,
+          },
+        }),
+      });
+
       if (oldQueryRes.ok) {
         const oldQueryData = await oldQueryRes.json();
         if (Array.isArray(oldQueryData) && oldQueryData[0]?.document) {
@@ -153,7 +124,7 @@ export async function POST(req) {
           const oldCount = oldDoc.fields?.memberCount?.integerValue
             ? parseInt(oldDoc.fields.memberCount.integerValue, 10)
             : 1;
-          
+
           await fetch(`${oldDocPath}?updateMask.fieldPaths=memberCount`, {
             method: "PATCH",
             headers,
@@ -167,18 +138,20 @@ export async function POST(req) {
       }
     }
 
-    const isNewMember = !previousCommunityId || previousCommunityId.toLowerCase() !== communityNameLower;
-    const newMemberCount = isNewMember ? currentMemberCount + 1 : currentMemberCount;
+    const isNewMember =
+      !previousCommunityId ||
+      previousCommunityId.toLowerCase() !== communityNameLower;
+    const newMemberCount = isNewMember
+      ? currentMemberCount + 1
+      : currentMemberCount;
 
-    // Upsert community doc
+    // ── 4. Upsert community doc ─────────────────────────────────────────────
     if (isExistingCommunity) {
       await fetch(`${targetDocPath}?updateMask.fieldPaths=memberCount`, {
         method: "PATCH",
         headers,
         body: JSON.stringify({
-          fields: {
-            memberCount: { integerValue: newMemberCount },
-          },
+          fields: { memberCount: { integerValue: newMemberCount } },
         }),
       });
     } else {
@@ -187,63 +160,59 @@ export async function POST(req) {
         headers,
         body: JSON.stringify({
           fields: {
-            name:        { stringValue: targetCommunityName },
-            nameLower:   { stringValue: communityNameLower },
+            name: { stringValue: targetCommunityName },
+            nameLower: { stringValue: communityNameLower },
             memberCount: { integerValue: newMemberCount },
-            createdAt:   { timestampValue: new Date().toISOString() },
-            type:        { stringValue: "general" },
+            createdAt: { timestampValue: new Date().toISOString() },
+            type: { stringValue: "general" },
           },
         }),
       });
     }
 
-    // ── 5. Update user doc ─────────────────────────────────────────────────
+    // ── 5. Update user doc communityId ──────────────────────────────────────
     await fetch(`${BASE}/users/${uid}?updateMask.fieldPaths=communityId`, {
       method: "PATCH",
       headers,
       body: JSON.stringify({
-        fields: {
-          communityId: { stringValue: targetCommunityName },
+        fields: { communityId: { stringValue: targetCommunityName } },
+      }),
+    });
+
+    // ── 6. Count active users in community ──────────────────────────────────
+    const cutoff = new Date(Date.now() - 2 * 60_000).toISOString();
+    const presenceRes = await fetch(BASE_QUERY, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        structuredQuery: {
+          from: [{ collectionId: "presence" }],
+          where: {
+            compositeFilter: {
+              op: "AND",
+              filters: [
+                {
+                  fieldFilter: {
+                    field: { fieldPath: "lastSeen" },
+                    op: "GREATER_THAN",
+                    value: { timestampValue: cutoff },
+                  },
+                },
+                {
+                  fieldFilter: {
+                    field: { fieldPath: "communityId" },
+                    op: "EQUAL",
+                    value: { stringValue: targetCommunityName },
+                  },
+                },
+              ],
+            },
+          },
+          limit: 500,
         },
       }),
     });
 
-    // ── 6. Count active users in community (presence in last 2 min) ────────
-    const cutoff = new Date(Date.now() - 2 * 60_000).toISOString();
-    const presenceRes = await fetch(
-      `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents:runQuery`,
-      {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          structuredQuery: {
-            from: [{ collectionId: "presence" }],
-            where: {
-              compositeFilter: {
-                op: "AND",
-                filters: [
-                  {
-                    fieldFilter: {
-                      field: { fieldPath: "lastSeen" },
-                      op: "GREATER_THAN",
-                      value: { timestampValue: cutoff },
-                    },
-                  },
-                  {
-                    fieldFilter: {
-                      field: { fieldPath: "communityId" },
-                      op: "EQUAL",
-                      value: { stringValue: targetCommunityName },
-                    },
-                  },
-                ],
-              },
-            },
-            limit: 500,
-          },
-        }),
-      },
-    );
     const presenceData = await presenceRes.json();
     const activeCount = Array.isArray(presenceData)
       ? presenceData.filter((r) => r.document).length
@@ -256,6 +225,9 @@ export async function POST(req) {
     });
   } catch (err) {
     console.error("Community join error:", err);
-    return NextResponse.json({ error: err.message || "Internal Server Error" }, { status: 500 });
+    return NextResponse.json(
+      { error: err.message || "Internal Server Error" },
+      { status: 500 }
+    );
   }
 }
