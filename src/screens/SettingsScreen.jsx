@@ -3,6 +3,7 @@ import { useAuth } from "../context/AuthProvider";
 import { useRouter } from "next/navigation";
 import CommunityPicker from "../components/CommunityPicker";
 import { useCommunityStats } from "../hooks/useCommunityStats";
+import { useNotifications } from "../hooks/useNotifications";
 
 const PREFERENCE_TOGGLES = [
   { key: "darkMode", label: "Dark Mode", desc: "Toggle dark appearance" },
@@ -29,6 +30,8 @@ export default function SettingsScreen() {
   const router = useRouter();
   const [changingCommunity, setChangingCommunity] = useState(false);
   const [saving, setSaving] = useState(false);
+  
+  const { permission, requestPermission, isSupported, disableNotifications } = useNotifications();
 
   // ── App preferences (persisted to localStorage) ─────────────────────────
   const [settings, setSettings] = useState(() => {
@@ -169,6 +172,55 @@ export default function SettingsScreen() {
               </button>
             </div>
           )}
+        </div>
+
+        <hr
+          style={{
+            border: "none",
+            borderTop: "1px solid var(--hairline-strong)",
+          }}
+        />
+
+        {/* ── Notifications Section ── */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+          <label
+            style={{
+              fontSize: "14px",
+              fontWeight: "bold",
+              color: "var(--ink)",
+            }}
+          >
+            Drop Notifications
+          </label>
+          <div className="setting-row">
+            <div className="setting-info">
+              <span className="setting-label">Push Notifications</span>
+              <span className="setting-desc">
+                {isSupported 
+                  ? (permission === 'granted' ? 'Enabled' : (permission === 'denied' ? 'Blocked in browser' : 'Get notified when a drop happens'))
+                  : 'Not supported on this browser'}
+              </span>
+            </div>
+            {isSupported && permission !== 'denied' && (
+              <button
+                className={`setting-switch ${permission === 'granted' ? "on" : "off"}`}
+                onClick={() => {
+                  if (permission === 'granted') {
+                    disableNotifications();
+                    // We can't actually change browser permission to prompt again easily,
+                    // but we can unregister the token on the backend to stop them.
+                    alert('Notifications disabled on the server. To completely block them, change your browser settings.');
+                  } else {
+                    requestPermission();
+                  }
+                }}
+                aria-label="Toggle Push Notifications"
+                id="setting-notifications"
+              >
+                <span className="switch-knob" />
+              </button>
+            )}
+          </div>
         </div>
 
         <hr

@@ -116,6 +116,102 @@ async function selectRecipients(communityId, authorUid, count, adminToken) {
   return [...new Set(recipients)].slice(0, count);
 }
 
+/**
+ * Fetch FCM tokens for recipients via batchGet and send push notifications.
+ * Runs asynchronously and doesn't block the drop.
+ */
+async function sendDropNotifications(recipientUids, dropId, adminToken, projectId) {
+  if (!recipientUids || recipientUids.length === 0) return;
+  
+  try {
+    const BASE_URL = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents`;
+    const documents = recipientUids.map(uid => `projects/${projectId}/databases/(default)/documents/users/${uid}`);
+    
+    const batchRes = await fetch(`${BASE_URL}:batchGet`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${adminToken}`,
+      },
+      body: JSON.stringify({ documents })
+    });
+    
+    if (!batchRes.ok) return;
+
+    const data = await batchRes.json();
+    const tokens = [];
+    if (Array.isArray(data)) {
+      for (const item of data) {
+        if (item.found?.fields?.fcmTokens?.arrayValue?.values) {
+          const vals = item.found.fields.fcmTokens.arrayValue.values;
+          vals.forEach(v => {
+            if (v.stringValue) tokens.push(v.stringValue);
+          });
+        }
+      }
+    }
+
+    if (tokens.length === 0) return;
+
+    const fcmUrl = `https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`;
+    
+    const FOMO_TITLES = [
+      "👀 Someone just confessed...",
+      "🔥 A wild secret just dropped!",
+      "🤫 Someone spilled the tea.",
+      "⚠️ 10-second confession LIVE now."
+    ];
+    const FOMO_BODIES = [
+      "Tap fast! It deletes itself in exactly 10 seconds.",
+      "You are one of the 100 randomly chosen to see this. Hurry!",
+      "Are you fast enough? It vanishes forever in 10s.",
+      "100 people are reading this right now. Don't miss it!"
+    ];
+
+    // Fire and forget
+    tokens.forEach(async (token) => {
+      const title = FOMO_TITLES[Math.floor(Math.random() * FOMO_TITLES.length)];
+      const body = FOMO_BODIES[Math.floor(Math.random() * FOMO_BODIES.length)];
+
+      try {
+        const sendRes = await fetch(fcmUrl, {
+          method: "POST",
+          headers: {
+             "Content-Type": "application/json",
+             Authorization: `Bearer ${adminToken}`,
+          },
+          body: JSON.stringify({
+            message: {
+              token,
+              notification: {
+                title,
+                body
+              },
+              data: {
+                dropId,
+                url: "/live"
+              }
+            }
+          })
+        });
+        
+        if (!sendRes.ok) {
+           const err = await sendRes.json();
+           if (err?.error?.details?.[0]?.errorCode === 'UNREGISTERED') {
+             console.warn(`Token stale/unregistered: ${token}`);
+             // Ideally we remove the token here, but skipping for brevity
+           }
+        }
+      } catch (err) {
+        console.error("FCM send error:", err);
+      }
+    });
+
+  } catch (error) {
+    console.error("Error sending drop notifications:", error);
+  }
+}
+
 export async function POST(req) {
   try {
     // ── 1. Auth — verify the user's own token ──────────────────────────────
@@ -313,6 +409,13 @@ export async function POST(req) {
         body: JSON.stringify({ writes: reactionWrites }),
       }
     );
+
+    // ── 9.5 Send FCM Notifications ─────────────────────────────────────────
+    if (recipients.length > 0) {
+      sendDropNotifications(recipients, dropId, adminToken, process.env.VITE_FIREBASE_PROJECT_ID).catch(err => {
+         console.error("Non-fatal error sending notifications:", err);
+      });
+    }
 
     // ── 10. Schedule expiry via QStash (T+60s → /api/expire) ───────────────
     const baseUrl =

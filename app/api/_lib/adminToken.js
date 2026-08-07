@@ -32,7 +32,7 @@ async function createServiceAccountJWT(serviceAccount) {
       JSON.stringify({
         iss: serviceAccount.client_email,
         scope:
-          "https://www.googleapis.com/auth/datastore https://www.googleapis.com/auth/firebase",
+          "https://www.googleapis.com/auth/datastore https://www.googleapis.com/auth/firebase https://www.googleapis.com/auth/firebase.messaging",
         aud: "https://oauth2.googleapis.com/token",
         iat: now,
         exp,

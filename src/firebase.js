@@ -6,6 +6,7 @@
 import { initializeApp } from "firebase/app";
 import { getAuth, signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, signOut } from "firebase/auth";
 import { getFirestore, serverTimestamp, doc, setDoc } from "firebase/firestore";
+import { getMessaging } from "firebase/messaging";
 
 export { serverTimestamp, doc, setDoc };
 
@@ -21,13 +22,14 @@ const firebaseConfig = {
   measurementId: "G-5D839RZ3LT"
 };
 
-export let app, auth, db, googleProvider;
+export let app, auth, db, googleProvider, messaging;
 export let loginWithGoogle, logout;
 
 if (typeof window !== "undefined") {
   app = initializeApp(firebaseConfig);
   auth = getAuth(app);
   db = getFirestore(app);
+  messaging = typeof window !== "undefined" && typeof navigator !== "undefined" && "serviceWorker" in navigator ? getMessaging(app) : null;
   googleProvider = new GoogleAuthProvider();
 
   loginWithGoogle = async () => {
