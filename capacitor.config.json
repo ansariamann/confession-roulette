@@ -1,0 +1,15 @@
+{
+  "appId": "com.confessionroulette.app",
+  "appName": "confession-roulette",
+  "webDir": "public",
+  "bundledWebRuntime": false,
+  "server": {
+    "url": "https://confession-roulette.iamamanansari786a.workers.dev/"
+  },
+  "plugins": {
+    "FirebaseAuthentication": {
+      "skipNativeAuth": false,
+      "providers": ["google.com"]
+    }
+  }
+}

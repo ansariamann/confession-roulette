@@ -4,9 +4,11 @@
 // ──────────────────────────────────────────────────────────────────────────────
 
 import { initializeApp } from "firebase/app";
-import { getAuth, signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, signOut } from "firebase/auth";
+import { getAuth, signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, signOut, signInWithCredential } from "firebase/auth";
 import { getFirestore, serverTimestamp, doc, setDoc } from "firebase/firestore";
 import { getMessaging } from "firebase/messaging";
+import { Capacitor } from '@capacitor/core';
+import { FirebaseAuthentication } from '@capacitor-firebase/authentication';
 
 export { serverTimestamp, doc, setDoc };
 
@@ -34,7 +36,13 @@ if (typeof window !== "undefined") {
 
   loginWithGoogle = async () => {
     try {
-      return await signInWithPopup(auth, googleProvider);
+      if (Capacitor.isNativePlatform()) {
+        const result = await FirebaseAuthentication.signInWithGoogle();
+        const credential = GoogleAuthProvider.credential(result.credential.idToken);
+        return await signInWithCredential(auth, credential);
+      } else {
+        return await signInWithPopup(auth, googleProvider);
+      }
     } catch (err) {
       if (err.code === "auth/popup-blocked" || err.code === "auth/cancelled-popup-request") {
         return signInWithRedirect(auth, googleProvider);
