@@ -28,14 +28,13 @@ firebase-debug.log
 server/serviceAccountKey.json
 
 # Environment secrets
+.env
+.env.*
+!.env.example
 server/.env
 
 # Next.js
 .next
-
-
-.wrangler
-
 
 # OpenNext
 .open-next
