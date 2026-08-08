@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "728793328944",
+    "project_id": "confession-roulette-a6b4b",
+    "storage_bucket": "confession-roulette-a6b4b.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:728793328944:android:45790a14b244e1a07cecf5",
+        "android_client_info": {
+          "package_name": "com.confessionroulette.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "728793328944-cpiqmbrvvv38auqdfrp7bq08a3bnjmc8.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA7I2DFg_G5UUpT_zHYghM2DCKmwpfYu4w"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "728793328944-cpiqmbrvvv38auqdfrp7bq08a3bnjmc8.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

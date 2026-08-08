@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">confession-roulette</string>
+    <string name="title_activity_main">confession-roulette</string>
+    <string name="package_name">com.confessionroulette.app</string>
+    <string name="custom_url_scheme">com.confessionroulette.app</string>
+</resources>

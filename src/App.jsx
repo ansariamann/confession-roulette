@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import {
   BrowserRouter,
   Routes,
@@ -16,6 +16,10 @@ import HallOfFameScreen from "./screens/HallOfFameScreen";
 import AdminScreen from "./screens/AdminScreen";
 import LoginScreen from "./screens/LoginScreen";
 import SettingsScreen from "./screens/SettingsScreen";
+import { PushNotifications } from '@capacitor/push-notifications';
+import { Capacitor } from '@capacitor/core';
+import { updateDoc, arrayUnion } from 'firebase/firestore';
+import { db, doc } from './firebase';
 
 function NavBar() {
   const location = useLocation();
@@ -157,6 +161,71 @@ function DropAutoNav() {
   return null;
 }
 
+function PushNotificationManager({ user }) {
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!user || !Capacitor.isNativePlatform()) return;
+
+    let isMounted = true;
+
+    const setupPush = async () => {
+      try {
+        let permStatus = await PushNotifications.checkPermissions();
+        if (permStatus.receive === 'prompt') {
+          permStatus = await PushNotifications.requestPermissions();
+        }
+        if (permStatus.receive !== 'granted') {
+          console.warn("Push permissions not granted");
+          return;
+        }
+
+        if (isMounted) await PushNotifications.register();
+      } catch (err) {
+        console.error("Push setup error:", err);
+      }
+    };
+
+    setupPush();
+
+    const addListeners = async () => {
+      await PushNotifications.addListener('registration', async (token) => {
+        try {
+          const userRef = doc(db, "users", user.uid);
+          await updateDoc(userRef, {
+            fcmTokens: arrayUnion(token.value)
+          });
+          console.log("FCM Token saved:", token.value);
+        } catch (e) {
+          console.error("Failed to save fcmToken", e);
+        }
+      });
+
+      await PushNotifications.addListener('registrationError', (error) => {
+        console.error('Error on registration: ', error);
+      });
+
+      await PushNotifications.addListener('pushNotificationReceived', (notification) => {
+        console.log('Push received: ', notification);
+      });
+
+      await PushNotifications.addListener('pushNotificationActionPerformed', (notification) => {
+        console.log('Push action performed: ', notification);
+        navigate("/live", { replace: true });
+      });
+    };
+
+    addListeners();
+
+    return () => {
+      isMounted = false;
+      PushNotifications.removeAllListeners();
+    };
+  }, [user, navigate]);
+
+  return null;
+}
+
 function AppShell() {
   const { user, loading } = useAuth();
 
@@ -188,6 +257,7 @@ function AppShell() {
     <div className="app-canvas">
       <Header />
       <DropAutoNav />
+      {user && <PushNotificationManager user={user} />}
       <Routes>
         <Route path="/" element={<ComposeScreen />} />
         <Route path="/live" element={<LiveDropScreen />} />
