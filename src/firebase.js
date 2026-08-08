@@ -44,15 +44,22 @@ if (typeof window !== "undefined") {
         return await signInWithPopup(auth, googleProvider);
       }
     } catch (err) {
-      if (err.code === "auth/popup-blocked" || err.code === "auth/cancelled-popup-request") {
-        return signInWithRedirect(auth, googleProvider);
+      if (err.code === "auth/popup-blocked") {
+        throw new Error("Sign in popup was blocked. Please allow popups for this site and try again.");
+      }
+      if (err.code === "auth/cancelled-popup-request") {
+        throw new Error("Sign in popup was closed. Please try again.");
       }
       throw err;
     }
   };
 
   getRedirectResult(auth).catch((err) => {
-    console.warn("Redirect result check:", err.message);
+    if (err.message.includes("missing initial state")) {
+      console.warn("Ignored cross-site storage error from getRedirectResult. Try signing in with popup instead.");
+    } else {
+      console.warn("Redirect result check:", err.message);
+    }
   });
 
   logout = () => signOut(auth);
