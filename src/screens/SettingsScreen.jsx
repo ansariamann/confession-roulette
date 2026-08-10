@@ -31,7 +31,7 @@ export default function SettingsScreen() {
   const [changingCommunity, setChangingCommunity] = useState(false);
   const [saving, setSaving] = useState(false);
   
-  const { permission, requestPermission, isSupported, disableNotifications } = useNotifications();
+  const { permission, isSupported, isRegistering, enableNotifications, disableNotifications } = useNotifications();
 
   // ── App preferences (persisted to localStorage) ─────────────────────────
   const [settings, setSettings] = useState(() => {
@@ -196,22 +196,28 @@ export default function SettingsScreen() {
             <div className="setting-info">
               <span className="setting-label">Push Notifications</span>
               <span className="setting-desc">
-                {isSupported 
-                  ? (permission === 'granted' ? 'Enabled' : (permission === 'denied' ? 'Blocked in browser' : 'Get notified when a drop happens'))
-                  : 'Not supported on this browser'}
+                {isRegistering
+                  ? 'Setting up…'
+                  : !isSupported
+                  ? 'Not supported on this device'
+                  : permission === 'granted'
+                  ? 'Enabled — you\u0027ll get notified when drops happen'
+                  : permission === 'denied'
+                  ? 'Blocked by your device — enable in system settings'
+                  : permission === 'disabled'
+                  ? 'Disabled — tap to re-enable'
+                  : 'Tap to enable push notifications'}
               </span>
             </div>
-            {isSupported && permission !== 'denied' && (
+            {isSupported && (
               <button
-                className={`setting-switch ${permission === 'granted' ? "on" : "off"}`}
-                onClick={() => {
+                className={`setting-switch ${(permission === 'granted') ? "on" : "off"}`}
+                disabled={isRegistering || permission === 'denied'}
+                onClick={async () => {
                   if (permission === 'granted') {
-                    disableNotifications();
-                    // We can't actually change browser permission to prompt again easily,
-                    // but we can unregister the token on the backend to stop them.
-                    alert('Notifications disabled on the server. To completely block them, change your browser settings.');
+                    await disableNotifications();
                   } else {
-                    requestPermission();
+                    await enableNotifications();
                   }
                 }}
                 aria-label="Toggle Push Notifications"

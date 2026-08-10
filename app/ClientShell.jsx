@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "../src/context/AuthProvider";
 import { useDrop } from "../src/context/DropContext";
+import { useNotifications } from "../src/hooks/useNotifications";
 import LoginScreen from "../src/screens/LoginScreen";
 
 function NavBar() {
@@ -153,6 +154,9 @@ function DropAutoNav() {
 
 export default function ClientShell({ children }) {
   const { user, loading } = useAuth();
+  // Initialize notifications immediately after login —
+  // this triggers the permission prompt on first visit
+  useNotifications();
 
   useEffect(() => {
     try {
@@ -166,9 +170,12 @@ export default function ClientShell({ children }) {
 
   if (loading) {
     return (
-      <div className="loading-screen">
-        <div className="loading-spinner" />
-        <span className="loading-text">Loading…</span>
+      <div className="app-canvas">
+        <Header />
+        <div className="screen" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+          <div className="loading-spinner" />
+        </div>
+        <NavBar />
       </div>
     );
   }

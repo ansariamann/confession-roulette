@@ -187,6 +187,11 @@ async function sendDropNotifications(recipientUids, dropId, adminToken, projectI
                 title,
                 body
               },
+              android: {
+                notification: {
+                  channel_id: "drops_channel"
+                }
+              },
               data: {
                 dropId,
                 url: "/live"
