@@ -168,8 +168,9 @@ async function sendDropNotifications(recipientUids, dropId, adminToken, projectI
       "100 people are reading this right now. Don't miss it!"
     ];
 
-    // Fire and forget
-    tokens.forEach(async (token) => {
+    // On Cloudflare Workers, we MUST await all outgoing requests, otherwise
+    // the worker will be suspended and the requests will be cancelled.
+    await Promise.all(tokens.map(async (token) => {
       const title = FOMO_TITLES[Math.floor(Math.random() * FOMO_TITLES.length)];
       const body = FOMO_BODIES[Math.floor(Math.random() * FOMO_BODIES.length)];
 
@@ -204,13 +205,12 @@ async function sendDropNotifications(recipientUids, dropId, adminToken, projectI
            const err = await sendRes.json();
            if (err?.error?.details?.[0]?.errorCode === 'UNREGISTERED') {
              console.warn(`Token stale/unregistered: ${token}`);
-             // Ideally we remove the token here, but skipping for brevity
            }
         }
       } catch (err) {
         console.error("FCM send error:", err);
       }
-    });
+    }));
 
   } catch (error) {
     console.error("Error sending drop notifications:", error);
@@ -417,9 +417,13 @@ export async function POST(req) {
 
     // ── 9.5 Send FCM Notifications ─────────────────────────────────────────
     if (recipients.length > 0) {
-      sendDropNotifications(recipients, dropId, adminToken, process.env.VITE_FIREBASE_PROJECT_ID).catch(err => {
-         console.error("Non-fatal error sending notifications:", err);
-      });
+      // CRITICAL: We MUST await this on Cloudflare Workers, otherwise the isolate
+      // is suspended immediately when we return the Response, and the FCM push never sends!
+      try {
+        await sendDropNotifications(recipients, dropId, adminToken, process.env.VITE_FIREBASE_PROJECT_ID);
+      } catch (err) {
+        console.error("Non-fatal error sending notifications:", err);
+      }
     }
 
     // ── 10. Schedule expiry via QStash (T+60s → /api/expire) ───────────────
